@@ -87,7 +87,6 @@ const grid=new THREE.GridHelper(4,20,0x3c4554,0x292f3b); grid.position.y=-.008; 
 const root=new THREE.Group(); scene.add(root);
 
 let curl=null,activeObject=null,vrm=null,mmdMesh=null,helper=null,mixer=null,currentExp='neutral',auto=false;
-let mmdMorphTargets=[],mmdMorphIndex=-1;
 let zipFiles=new Map(),urls=[],radius=2.5,targetY=1,drag=false,lastX=0,lastY=0,downX=0,downY=0,moved=0,yaw=0,pitch=0,zoom=1;
 const clock=new THREE.Clock();
 const pan=new THREE.Vector3();let lastMid=null;   // 2本指スワイプによる注視点の平行移動
@@ -275,7 +274,7 @@ function vmdToVRM(vmd,v){
 function clearModel(){
   if(activeObject){root.remove(activeObject);activeObject.traverse(o=>{o.geometry?.dispose?.();
     if(o.material)for(const m of(Array.isArray(o.material)?o.material:[o.material])){for(const k of['map','normalMap','roughnessMap','metalnessMap','emissiveMap','alphaMap'])m[k]?.dispose?.();m.dispose?.();}});}
-  activeObject=vrm=mmdMesh=helper=mixer=curl=null; mmdMorphTargets=[];mmdMorphIndex=-1; zipFiles.clear(); urls.forEach(u=>URL.revokeObjectURL(u)); urls=[];
+  activeObject=vrm=mmdMesh=helper=mixer=curl=null; zipFiles.clear(); urls.forEach(u=>URL.revokeObjectURL(u)); urls=[];
 }
 function fitObject(obj){
   obj.updateMatrixWorld(true);const box=new THREE.Box3().setFromObject(obj);
@@ -341,22 +340,7 @@ async function loadFile(file){
     buildExpressions();
   }catch(e){console.error(e);status('読み込み失敗：'+(e?.message||e));}
 }
-function buildExpressions(){
-  // 下の表情ボタンはVRM専用。MMDはモデルを直接タップしてモーフを切り替える。
-  $('expr').querySelectorAll('button').forEach(b=>b.disabled=!vrm?.expressionManager);
-  mmdMorphTargets=[];mmdMorphIndex=-1;
-  if(mmdMesh){
-    const seen=new Set();
-    mmdMesh.traverse(o=>{
-      if(!o.morphTargetDictionary||!o.morphTargetInfluences)return;
-      for(const [name,index] of Object.entries(o.morphTargetDictionary)){
-        const key=o.uuid+':'+index;
-        if(seen.has(key))continue;seen.add(key);
-        mmdMorphTargets.push({mesh:o,name,index});
-      }
-    });
-  }
-}
+function buildExpressions(){$('expr').querySelectorAll('button').forEach(b=>b.disabled=!vrm?.expressionManager);}
 function setExpression(name){
   currentExp=name;const em=vrm?.expressionManager;if(!em)return;
   for(const n of['happy','angry','sad','relaxed','surprised','neutral'])try{em.setValue(n,0);}catch{}
@@ -464,16 +448,6 @@ function pointerEnd(e){
 }
 canvas.addEventListener('pointerup',pointerEnd);canvas.addEventListener('pointercancel',pointerEnd);
 function cycleExpression(){
-  if(mmdMesh){
-    if(!mmdMorphTargets.length){status('このMMDモデルにはモーフがありません');return;}
-    // MMDのモーフ名を照合せず、モデルに実在するモーフを順番に直接切り替える。
-    mmdMorphIndex=(mmdMorphIndex+1)%mmdMorphTargets.length;
-    for(const {mesh,index} of mmdMorphTargets)mesh.morphTargetInfluences[index]=0;
-    const target=mmdMorphTargets[mmdMorphIndex];
-    target.mesh.morphTargetInfluences[target.index]=1;
-    status('MMDモーフ：'+target.name+'（'+(mmdMorphIndex+1)+'/'+mmdMorphTargets.length+'）');
-    return;
-  }
   if(!vrm?.expressionManager)return;
   const names=['neutral','happy','surprised','sad','angry','relaxed'],n=names[(names.indexOf(currentExp)+1)%names.length];
   setExpression(n);status('タップ：'+($('expr').querySelector(`[data-exp="${n}"]`)?.textContent||n));
