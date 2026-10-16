@@ -25,6 +25,18 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .rangebox{flex:1;min-width:140px;color:#bfc7d4;font-size:12px}
 #hint{position:absolute;left:0;right:0;bottom:205px;text-align:center;color:#cbd0d9;font-size:12px;pointer-events:none;text-shadow:0 1px 5px #000}
 @media (orientation:landscape){#view{inset:0 0 100px}#panel{max-height:35vh;padding:8px 12px}#hint{bottom:110px}.row{margin-bottom:5px}}
+details#hist{margin-bottom:8px;border:1px solid var(--line);border-radius:11px;background:#1a1d26}
+#hist summary{padding:9px 12px;cursor:pointer;font-size:13px;color:#cfd6e2}
+.hcols{display:flex;gap:8px;padding:0 8px 8px;flex-wrap:wrap}
+.hcol{flex:1;min-width:220px}
+.hcol h4{margin:4px 2px 6px;font-size:12px;color:#aeb6c5;font-weight:600}
+.hlist{max-height:132px;overflow:auto;display:flex;flex-direction:column;gap:4px}
+.hitem{display:flex;gap:4px}
+.hsel{flex:1;min-width:0;display:flex;justify-content:space-between;gap:6px;text-align:left;padding:7px 10px;min-height:36px}
+.hn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hsz{flex:none;color:#8f99ab;font-size:11px}
+.hdel{padding:7px 10px;min-height:36px;color:#e8a0a0}
+.hitem.on .hsel{background:#244a49;border-color:#39716b}
 </style></head>
 <body>
 <div id="view"><canvas id="c"></canvas></div>
@@ -37,6 +49,13 @@ input[type=range]{width:100%;accent-color:var(--accent)}
     <button id="stop">モーション停止</button>
     <button id="reset">視点リセット</button>
   </div>
+  <details id="hist"><summary id="histSum">履歴</summary>
+    <div class="hcols">
+      <div class="hcol"><h4>モデル</h4><div class="hlist" id="hModel"></div></div>
+      <div class="hcol"><h4>モーション</h4><div class="hlist" id="hMotion"></div></div>
+    </div>
+    <div class="row" style="padding:0 8px"><span id="hinfo" class="muted"></span><button id="hClear" style="min-height:32px;padding:5px 10px">履歴を全削除</button></div>
+  </details>
   <div class="row">
     <div class="rangebox">拡大率 <span id="zoomText">1.0×</span><input id="zoom" type="range" min="0.5" max="3.5" step="0.05" value="1"></div>
     <div class="rangebox">指の曲げ <span id="handText">1.25</span><input id="hand" type="range" min="0" max="2.5" step="0.05" value="1.25"></div>
@@ -51,7 +70,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   <div class="muted">
     対応：GLB / VRM / MMDモデル（PMX・PMDを含むZIP）。モーション：VRMA・VMD（モデルの種類に関係なく適用）。
     モデルは読み込み直後、そのモデル本来のポーズ（T/Aポーズ）で表示します。VMD→VRMは足IKを2ボーンIKで近似します（接地や足先の細かな動きは元と差が出ます）。
-    外部ライブラリの読み込みにインターネット接続が必要です。
+    外部ライブラリの読み込みにインターネット接続が必要です。モデルとモーションは独立して読み込めます（モデルを替えても選択中のモーションを再適用）。履歴はこのブラウザ内（IndexedDB）に各10件まで保存されます。
   </div>
 </section>
 <script type="importmap">
@@ -66,6 +85,9 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 import * as THREE from 'three';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import {MMDLoader} from 'three/addons/loaders/MMDLoader.js';
+import {FBXLoader} from 'three/addons/loaders/FBXLoader.js';
+import {OBJLoader} from 'three/addons/loaders/OBJLoader.js';
+import {MTLLoader} from 'three/addons/loaders/MTLLoader.js';
 import {MMDAnimationHelper} from 'three/addons/animation/MMDAnimationHelper.js';
 import {VRMLoaderPlugin,VRMUtils} from '@pixiv/three-vrm';
 import {VRMAnimationLoaderPlugin,createVRMAnimationClip} from '@pixiv/three-vrm-animation';
@@ -86,7 +108,7 @@ floor.rotation.x=-Math.PI/2; floor.position.y=-.015; scene.add(floor);
 const grid=new THREE.GridHelper(4,20,0x3c4554,0x292f3b); grid.position.y=-.008; scene.add(grid);
 const root=new THREE.Group(); scene.add(root);
 
-let curl=null,activeObject=null,vrm=null,mmdMesh=null,helper=null,mixer=null,currentExp='neutral',auto=false;
+let panMode=false,paused=false,motionFile=null,curIds={model:null,motion:null},curl=null,activeObject=null,vrm=null,mmdMesh=null,helper=null,mixer=null,currentExp='neutral',auto=false;
 let zipFiles=new Map(),urls=[],radius=2.5,targetY=1,drag=false,lastX=0,lastY=0,downX=0,downY=0,moved=0,yaw=0,pitch=0,zoom=1;
 const clock=new THREE.Clock();
 const pan=new THREE.Vector3();let lastMid=null;   // 2本指スワイプによる注視点の平行移動
@@ -307,11 +329,11 @@ async function shrinkImg(f,max=1024){   // 大きなテクスチャは縮小し�
     return blob?new File([blob],f.name,{type:'image/png'}):f;
   }catch{return f;}
 }
-async function loadFile(file){
-  if(!file)return;clearModel();status('読み込み中…');
+async function loadFile(file,hid){
+  if(!file)return;clearModel();curIds.model=null;status('読み込み中…');
   try{
     const ext=file.name.split('.').pop().toLowerCase();
-    if(ext==='zip'||ext==='pmx'||ext==='pmd'){
+    if(ext==='zip'||ext==='pmx'||ext==='pmd'||ext==='fbx'||ext==='obj'){
       if(ext==='zip'){
         const entries=unzipSync(new Uint8Array(await file.arrayBuffer()));
         for(const [path,data] of Object.entries(entries)){if(path.endsWith('/'))continue;
@@ -322,14 +344,24 @@ async function loadFile(file){
         if(n%2===0){status('テクスチャ準備中… '+n+'/'+keys.length);await new Promise(r=>setTimeout(r));}
         zipFiles.set(keys[n],await shrinkImg(zipFiles.get(keys[n])));
       }
-      const model=[...zipFiles.values()].find(f=>/\.(pmx|pmd)$/i.test(f.name));
-      if(!model)throw new Error('ZIP内にPMX/PMDが見つかりません');
+      const model=[...zipFiles.values()].find(f=>/\.(pmx|pmd|fbx|obj)$/i.test(f.name));
+      if(!model)throw new Error('ZIP内にPMX/PMD/FBX/OBJが見つかりません');
       const manager=new THREE.LoadingManager();
       manager.setURLModifier(url=>{let raw;try{raw=decodeURIComponent(url.split(/[\\/]/).pop().split('?')[0]);}catch{raw=url.split(/[\\/]/).pop();}
         const f=zipFiles.get(raw.toLowerCase());if(f){const u=URL.createObjectURL(f);urls.push(u);return u;}return url;});
       const u=URL.createObjectURL(model)+'#.'+model.name.split('.').pop().toLowerCase();urls.push(u);   // MMDLoaderはURL末尾の拡張子でpmx/pmdを判定するため付与
-      mmdMesh=await new MMDLoader(manager).loadAsync(u);
-      activeObject=mmdMesh;root.add(activeObject);fitObject(activeObject);status(model.name+' を表示中');
+      const mext=model.name.split('.').pop().toLowerCase();
+      if(mext==='fbx'){
+        activeObject=await new FBXLoader(manager).loadAsync(u);
+      }else if(mext==='obj'){
+        const objL=new OBJLoader(manager),mtl=[...zipFiles.values()].find(f=>/\.mtl$/i.test(f.name));
+        if(mtl){const mu=URL.createObjectURL(mtl);urls.push(mu);objL.setMaterials(await new MTLLoader(manager).loadAsync(mu));}
+        activeObject=await objL.loadAsync(u);
+      }else{
+        mmdMesh=await new MMDLoader(manager).loadAsync(u);activeObject=mmdMesh;
+      }
+      if(!mmdMesh)activeObject.traverse(o=>{if(o.isMesh){o.frustumCulled=false;o.castShadow=true;}});
+      root.add(activeObject);fitObject(activeObject);status(model.name+' を表示中');
     }else{
       const loader=new GLTFLoader();loader.register(p=>new VRMLoaderPlugin(p));
       const u=URL.createObjectURL(file);urls.push(u);const gltf=await loader.loadAsync(u);
@@ -338,6 +370,8 @@ async function loadFile(file){
       root.add(activeObject);fitObject(activeObject);status(file.name+' を表示中');
     }
     buildExpressions();
+    saveHist('model',file,hid);
+    if(motionFile)await loadMotion(motionFile,{reapply:1});   // 選択中のモーションを新しいモデルへ再適用
   }catch(e){console.error(e);status('読み込み失敗：'+(e?.message||e));}
 }
 function buildExpressions(){$('expr').querySelectorAll('button').forEach(b=>b.disabled=!vrm?.expressionManager);}
@@ -347,7 +381,78 @@ function setExpression(name){
   if(name!=='neutral')try{em.setValue(name,1);}catch{}
 }
 $('expr').addEventListener('click',e=>{const b=e.target.closest('button[data-exp]');if(!b)return;setExpression(b.dataset.exp);status('表情：'+b.textContent);});
-$('modelFile').addEventListener('change',e=>loadFile(e.target.files?.[0]));
+$('modelFile').addEventListener('change',e=>{loadFile(e.target.files?.[0]);e.target.value='';});
+
+// ---- 履歴（IndexedDB）：ファイル本体を保存し、再読み込みなしで選べる。種別ごと最大10件、容量不足時は古い順に削除 ----
+const HIST_MAX=10,fmt=n=>n>=1048576?(n/1048576).toFixed(1)+'MB':Math.max(1,Math.round(n/1024))+'KB';
+let dbp=null,hnote='';
+const idb=r=>new Promise((ok,ng)=>{r.onsuccess=()=>ok(r.result);r.onerror=()=>ng(r.error);});
+const txd=t=>new Promise((ok,ng)=>{t.oncomplete=ok;t.onerror=t.onabort=()=>ng(t.error||new Error('abort'));});
+function hdb(){return dbp||(dbp=new Promise((ok,ng)=>{
+  if(!window.indexedDB)return ng(new Error('IndexedDB非対応'));
+  const r=indexedDB.open('model-viewer-history',1);
+  r.onupgradeneeded=()=>{r.result.createObjectStore('meta',{keyPath:'id',autoIncrement:true});r.result.createObjectStore('blobs');};
+  r.onsuccess=()=>ok(r.result);r.onerror=()=>ng(r.error);
+}).catch(e=>{dbp=null;throw e;}));}
+const hAll=async()=>idb((await hdb()).transaction('meta').objectStore('meta').getAll());
+async function hDel(id){const t=(await hdb()).transaction(['meta','blobs'],'readwrite');t.objectStore('meta').delete(id);t.objectStore('blobs').delete(id);await txd(t);}
+async function hTouch(id){const t=(await hdb()).transaction('meta','readwrite'),s=t.objectStore('meta'),m=await idb(s.get(id));if(m){m.time=Date.now();s.put(m);}await txd(t);return id;}
+async function hGet(id){const t=(await hdb()).transaction(['meta','blobs']),[m,b]=await Promise.all([idb(t.objectStore('meta').get(id)),idb(t.objectStore('blobs').get(id))]);
+  if(!m||!b)throw new Error('履歴データが見つかりません');return new File([b],m.name);}
+async function hSave(kind,file){
+  const all=await hAll(),dup=all.find(m=>m.kind===kind&&m.name===file.name&&m.size===file.size);
+  if(dup)return hTouch(dup.id);
+  try{navigator.storage?.persist?.();}catch{}
+  const est=await (navigator.storage?.estimate?.()||Promise.resolve(null)).catch(()=>null);
+  if(est?.quota&&file.size>est.quota-est.usage+all.reduce((a,m)=>a+m.size,0))throw new Error('too big');
+  for(let i=0;i<10;i++){
+    try{
+      const t=(await hdb()).transaction(['meta','blobs'],'readwrite');
+      const id=await idb(t.objectStore('meta').add({kind,name:file.name,size:file.size,time:Date.now()}));
+      t.objectStore('blobs').put(file,id);await txd(t);
+      const mine=(await hAll()).filter(m=>m.kind===kind).sort((a,b)=>b.time-a.time);
+      for(const m of mine.slice(HIST_MAX))await hDel(m.id);
+      return id;
+    }catch(e){const old=(await hAll()).sort((a,b)=>a.time-b.time)[0];if(!old)throw e;await hDel(old.id);}   // 容量不足など：最古を消して再試行
+  }
+  throw new Error('quota');
+}
+function saveHist(kind,file,hid){
+  (hid!=null?hTouch(hid):hSave(kind,file)).then(id=>{curIds[kind]=id;hnote='';histRender();})
+    .catch(e=>{console.warn('履歴保存',e);hnote='履歴に保存できませんでした（容量不足など）。表示・再生は通常どおり使えます。';histRender();});
+}
+async function histRender(){
+  let all;
+  try{all=await hAll();}catch(e){$('histSum').textContent='履歴（利用できません）';$('hinfo').textContent='この環境では履歴を保存できません：'+(e?.message||e);return;}
+  const cnt={};
+  for(const [kind,el] of [['model',$('hModel')],['motion',$('hMotion')]]){
+    const items=all.filter(m=>m.kind===kind).sort((a,b)=>b.time-a.time);cnt[kind]=items.length;
+    el.replaceChildren(...(items.length?items:[null]).map(m=>{
+      const d=document.createElement('div');
+      if(!m){d.className='muted';d.textContent='まだありません';return d;}
+      d.className='hitem'+(curIds[kind]===m.id?' on':'');
+      const b=document.createElement('button');b.className='hsel';b.dataset.kind=kind;b.dataset.id=m.id;b.title=m.name;
+      const n=document.createElement('span');n.className='hn';n.textContent=m.name;
+      const z=document.createElement('span');z.className='hsz';z.textContent=fmt(m.size);b.append(n,z);
+      const x=document.createElement('button');x.className='hdel';x.dataset.del=m.id;x.title='履歴から削除';x.textContent='✕';
+      d.append(b,x);return d;}));
+  }
+  $('histSum').textContent='履歴（モデル '+cnt.model+'・モーション '+cnt.motion+'）';
+  let u='';try{const e=await navigator.storage.estimate();u='使用量 '+fmt(e.usage)+' / 上限の目安 '+fmt(e.quota);}catch{}
+  $('hinfo').textContent=(hnote?hnote+' ':'')+u;
+}
+$('hist').addEventListener('click',async e=>{
+  const del=e.target.closest('[data-del]'),sel=e.target.closest('.hsel');
+  try{
+    if(del){await hDel(+del.dataset.del);hnote='';histRender();}
+    else if(sel){const id=+sel.dataset.id,f=await hGet(id);if(sel.dataset.kind==='model')await loadFile(f,id);else await loadMotion(f,{hid:id});}
+    else if(e.target.id==='hClear'&&confirm('履歴をすべて削除しますか？')){
+      const t=(await hdb()).transaction(['meta','blobs'],'readwrite');t.objectStore('meta').clear();t.objectStore('blobs').clear();await txd(t);
+      curIds.model=curIds.motion=null;hnote='';histRender();}
+  }catch(err){status('履歴の操作に失敗：'+(err?.message||err));}
+});
+try{$('hist').open=localStorage.getItem('mvHistOpen')==='1';}catch{}
+$('hist').addEventListener('toggle',()=>{try{localStorage.setItem('mvHistOpen',$('hist').open?'1':'0');}catch{}});
 
 // ---- モーション：VRMA/VMD を VRM/MMD のどちらにも適用 ----
 function stopMotion(){curl=null;mixer?.stopAllAction();mixer=null;vrm?.humanoid.resetNormalizedPose();helper=null;mmdMesh?.pose();}
@@ -393,8 +498,9 @@ function fixMorphNames(vmd,mesh){
   if(map.size)for(const m of vmd.morphs)if(map.has(m.morphName))m.morphName=map.get(m.morphName);
   return {total:all.size,ok,fixed};
 }
-async function loadMotion(f){
-  if(!f)return;if(!vrm&&!mmdMesh){status('先にモデル（VRM/MMD）を開いてください');return;}
+async function loadMotion(f,o={}){
+  if(!f)return;motionFile=f;paused=false;$('stop').textContent='モーション停止';if(!o.reapply)curIds.motion=null;   // モデル未読込でも保持し、モデルを開いた時に適用
+  if(!vrm&&!mmdMesh){status(f.name+' を保持しました（モデルを開くと適用します）');if(!o.reapply)saveHist('motion',f,o.hid);return;}
   const isV=/\.vmd$/i.test(f.name);status('モーション読み込み中…');stopMotion();
   try{
     let anim=null,vmd=null,mi=null;
@@ -409,10 +515,14 @@ async function loadMotion(f){
       mixer=new THREE.AnimationMixer(vrm.scene);const vc=isV?vmdToVRM(vmd,vrm):createVRMAnimationClip(anim,vrm);mixer.clipAction(vc).play();setupCurlVRM(vc);
     }
     status(f.name+' を再生中（'+(isV?'VMD':'VRMA')+' → '+(mmdMesh?'MMD':'VRM')+'）'+(mi&&mi.total?'　表情 '+(mi.ok+mi.fixed)+'/'+mi.total+'件を反映'+(mi.fixed?'（名前補正'+mi.fixed+'）':''):''));
-  }catch(err){console.error(err);status('モーション読込失敗：'+(err?.message||err));}
+    if(!o.reapply)saveHist('motion',f,o.hid);
+  }catch(err){console.error(err);motionFile=null;curIds.motion=null;histRender();status('モーション読込失敗：'+(err?.message||err));}
 }
 $('motionFile').addEventListener('change',e=>{loadMotion(e.target.files?.[0]);e.target.value='';});
-$('stop').onclick=()=>{stopMotion();status('モーションを停止（元のポーズ）');};
+$('stop').onclick=()=>{   // 一時停止／再開（ポーズはそのまま保持）
+  if(!motionFile){status('モーションが読み込まれていません');return;}
+  paused=!paused;$('stop').textContent=paused?'モーション再開':'モーション停止';status(paused?'モーションを一時停止':'モーションを再開');
+};
 
 $('hand').addEventListener('input',e=>{$('handText').textContent=(+e.target.value).toFixed(2);});
 $('zoom').addEventListener('input',e=>{zoom=+e.target.value;$('zoomText').textContent=zoom.toFixed(2)+'×';updateCamera();});
@@ -420,11 +530,25 @@ $('autoRotate').onclick=()=>{auto=!auto;$('autoRotate').textContent='自動回�
 $('reset').onclick=()=>{yaw=0;pitch=0;zoom=1;pan.set(0,0,0);$('zoom').value='1';$('zoomText').textContent='1.0×';updateCamera();};
 $('home').onclick=()=>{yaw=0;updateCamera();};
 
+function panBy(dx,dy){   // 画面上の移動量(px)→注視点の平行移動
+  const dist=radius*2.25/zoom,k=2*dist*Math.tan(THREE.MathUtils.degToRad(camera.fov/2))/Math.max(1,canvas.clientHeight);
+  camera.updateMatrixWorld();
+  const right=new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld,0),up=new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld,1);
+  pan.addScaledVector(right,-dx*k).addScaledVector(up,dy*k);updateCamera();
+}
+// ---- PC操作：ホイール＝ズーム、右/中ドラッグ・Shift+ドラッグ＝移動、Space＝モーション停止/再開 ----
+canvas.addEventListener('wheel',e=>{e.preventDefault();const d=e.deltaMode===1?e.deltaY*33:e.deltaY;
+  zoom=THREE.MathUtils.clamp(zoom*Math.exp(-d*.0015),.5,3.5);$('zoom').value=zoom;$('zoomText').textContent=zoom.toFixed(2)+'×';updateCamera();},{passive:false});
+canvas.addEventListener('contextmenu',e=>e.preventDefault());
+addEventListener('keydown',e=>{if(e.code!=='Space'||e.repeat)return;e.preventDefault();$('stop').click();});
+addEventListener('keyup',e=>{if(e.code==='Space')e.preventDefault();});   // フォーカス中ボタンの二重発火を防ぐ
+if(matchMedia('(pointer:fine)').matches)$('hint').textContent='ドラッグ：回転 ／ 右ドラッグ・Shift+ドラッグ：移動 ／ ホイール：拡大縮小 ／ クリック：表情変更 ／ Space：モーション停止・再開';
 const pointers=new Map();let pinchStart=0,pinchZoom=1;
 const point=e=>({x:e.clientX,y:e.clientY});
 canvas.addEventListener('pointerdown',e=>{
   canvas.setPointerCapture(e.pointerId);pointers.set(e.pointerId,point(e));
-  if(pointers.size===1){drag=true;lastX=downX=e.clientX;lastY=downY=e.clientY;moved=0;}
+  if(pointers.size===1){drag=true;lastX=downX=e.clientX;lastY=downY=e.clientY;moved=0;
+    panMode=e.pointerType==='mouse'&&(e.button!==0||e.shiftKey);if(panMode)moved=999;}
   if(pointers.size===2){const a=[...pointers.values()];pinchStart=Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y);pinchZoom=zoom;drag=false;moved=999;lastMid={x:(a[0].x+a[1].x)/2,y:(a[0].y+a[1].y)/2};}
 });
 canvas.addEventListener('pointermove',e=>{
@@ -438,12 +562,13 @@ canvas.addEventListener('pointermove',e=>{
       pan.addScaledVector(right,-(mid.x-lastMid.x)*k).addScaledVector(up,(mid.y-lastMid.y)*k);}
     lastMid=mid;
     if(pinchStart>0){zoom=THREE.MathUtils.clamp(pinchZoom*d/pinchStart,.5,3.5);$('zoom').value=zoom;$('zoomText').textContent=zoom.toFixed(2)+'×';updateCamera();}return;}
+  if(drag&&panMode){panBy(e.clientX-lastX,e.clientY-lastY);lastX=e.clientX;lastY=e.clientY;return;}
   if(drag){const dx=e.clientX-lastX,dy=e.clientY-lastY;moved+=Math.abs(dx)+Math.abs(dy);
     yaw-=dx*.008;pitch=THREE.MathUtils.clamp(pitch+dy*.006,-1.25,1.25);lastX=e.clientX;lastY=e.clientY;updateCamera();}
 });
 function pointerEnd(e){
   pointers.delete(e.pointerId);
-  if(pointers.size===0){drag=false;pinchStart=0;lastMid=null;if(moved<12)cycleExpression();}
+  if(pointers.size===0){drag=false;panMode=false;pinchStart=0;lastMid=null;if(moved<12)cycleExpression();}
   else if(pointers.size===1){const p=[...pointers.values()][0];lastX=p.x;lastY=p.y;drag=true;}
 }
 canvas.addEventListener('pointerup',pointerEnd);canvas.addEventListener('pointercancel',pointerEnd);
@@ -455,9 +580,10 @@ function cycleExpression(){
 function animate(){
   requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.05);
   if(auto&&activeObject){yaw+=dt*.35;updateCamera();}
-  mixer?.update(dt);applyCurl(dt);vrm?.update(dt);
-  if(helper)try{helper.update(dt);}catch(e){console.warn(e);}
+  if(!paused)mixer?.update(dt);applyCurl(dt);vrm?.update(dt);
+  if(helper&&!paused)try{helper.update(dt);}catch(e){console.warn(e);}
   renderer.render(scene,camera);
 }
+histRender();
 animate();
 </script></body></html>
