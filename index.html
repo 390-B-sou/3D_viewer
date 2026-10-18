@@ -37,6 +37,7 @@ details#hist{margin-bottom:8px;border:1px solid var(--line);border-radius:11px;b
 .hn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hsz{flex:none;color:#8f99ab;font-size:11px}
 .hdel{padding:7px 10px;min-height:36px;color:#e8a0a0}
+.lrepb{flex:none;min-width:48px;min-height:36px;padding:7px 8px;text-align:center;color:#9fe3d8;font-variant-numeric:tabular-nums}
 .hitem.on .hsel{background:#244a49;border-color:#39716b}
 
 details#plist,details#morphBox{margin-bottom:8px;border:1px solid var(--line);border-radius:11px;background:#1a1d26}
@@ -67,6 +68,9 @@ body.dv #pbody{padding:calc(10px + env(safe-area-inset-top)) 12px 12px 2px}
 #morphList{max-height:220px;overflow:auto}
 .mrow{display:grid;grid-template-columns:minmax(70px,32%) 1fr 36px;gap:6px;align-items:center;margin-bottom:3px;font-size:12px;color:#cfd6e2}
 .mrow .mn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mrow .mv{text-align:right;color:#8f99ab}
+html,body{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+input[type=search]{-webkit-user-select:text;user-select:text}
+#status{-webkit-user-select:text;user-select:text;pointer-events:auto}
 </style></head>
 <body>
 <div id="view"><canvas id="c"></canvas></div>
@@ -768,7 +772,7 @@ async function lRefresh(){
 async function lInit(){try{const s=localStorage.getItem('mvListSel');curListId=s?+s:null;}catch{}await lRefresh();}
 try{$('plist').open=localStorage.getItem('mvListOpen')!=='0';}catch{}
 $('plist').addEventListener('toggle',()=>{try{localStorage.setItem('mvListOpen',$('plist').open?'1':'0');}catch{}});
-const listTag=()=>{const L=playCtx&&lists.find(l=>l.id===playCtx.listId);if(!L)return '';const i=L.items.findIndex(x=>x.key===playCtx.key);return '　['+L.name+' '+(i+1)+'/'+L.items.length+']';};
+const listTag=()=>{const L=playCtx&&lists.find(l=>l.id===playCtx.listId);if(!L)return '';const i=L.items.findIndex(x=>x.key===playCtx.key);const r=Math.max(1,L.items[i]?.rep|0||1);return '　['+L.name+' '+(i+1)+'/'+L.items.length+(r>1?'　×'+(playCtx.n||1)+'/'+r:'')+']';};
 function listRender(){
   const sel=$('listSel'),L=curList();
   sel.replaceChildren(new Option('新規リスト',''),...lists.map(l=>new Option(l.name+'（'+l.items.length+'）',String(l.id))));
@@ -785,7 +789,8 @@ function listRender(){
     const b=document.createElement('button');b.className='lsel';b.dataset.play=it.key;b.title=it.name;
     const n=document.createElement('span');n.className='hn';n.style.display='block';n.textContent=(i+1)+'. '+it.name;b.append(n);
     const x=document.createElement('button');x.className='hdel';x.dataset.lrm=it.key;x.title='リストから外す';x.textContent='✕';
-    d.append(g,b,x);return d;}));
+    const w=document.createElement('button');w.className='lrepb';w.dataset.rep=it.key;w.title='タップで繰り返し回数を増やす（長押しで1に戻す）';w.textContent='×'+Math.max(1,it.rep|0||1);
+    d.append(g,b,w,x);return d;}));
 }
 function openAddMenu(btn,hid){
   const ent=[{label:'＋ 新規リスト（このモーション名で作成）',on:curListId==null,fn:()=>addToList(null,hid)}];
@@ -799,7 +804,7 @@ async function addToList(lid,hid){
     let L=lid==null?null:lists.find(l=>l.id===lid);
     if(lid!=null&&!L)throw new Error('リストが見つかりません');
     if(!L){const base=file.name.replace(/\.[^.]+$/,''),names=new Set(lists.map(l=>l.name));let nm=base,n=2;while(names.has(nm))nm=base+' ('+(n++)+')';L={name:nm,items:[]};}   // 新規リストは最初のモーション名
-    L.items.push({key,name:file.name,size:file.size});
+    L.items.push({key,name:file.name,size:file.size,rep:1});
     const t=(await hdb()).transaction(['lists','lblobs'],'readwrite');
     t.objectStore('lblobs').put(file,key);
     const id=await idb(t.objectStore('lists').put(L));await txd(t);
@@ -849,7 +854,7 @@ async function playListFrom(L,key,opt){
   try{
     if(opt&&opt.prep&&!(await prepareList(L)))return;
     const f=await listFile(it);
-    playCtx={listId:L.id,key:it.key};
+    playCtx={listId:L.id,key:it.key,n:1};
     await loadMotion(f,{fromList:1,noHist:1,ck:'L'+it.key});
   }catch(e){status('リスト再生に失敗：'+(e?.message||e));}
 }
@@ -877,8 +882,20 @@ $('listDel').onclick=async()=>{
     if(playCtx&&playCtx.listId===L.id)playCtx=null;curListId=null;saveSel();await lRefresh();status('リストを削除しました');
   }catch(e){status('リストの削除に失敗：'+(e?.message||e));}
 };
+// 繰り返し回数：タップで 1→2→3…（99の次は1）、長押しで1に戻す
+const REP_MAX=99;let repTimer=0,repLong=false;
+async function setRep(L,it,v,btn){
+  it.rep=v;btn.textContent='×'+v;
+  try{const t=(await hdb()).transaction('lists','readwrite');t.objectStore('lists').put(L);await txd(t);}catch(err){status('回数の保存に失敗：'+(err?.message||err));}
+}
+$('listItems').addEventListener('pointerdown',e=>{
+  const b=e.target.closest('.lrepb');if(!b)return;repLong=false;clearTimeout(repTimer);
+  repTimer=setTimeout(()=>{repLong=true;const L=curList(),it=L&&L.items.find(i=>i.key===b.dataset.rep);if(it&&(it.rep|0||1)!==1)setRep(L,it,1,b);},500);
+});
+for(const ev of ['pointerup','pointerleave','pointercancel'])$('listItems').addEventListener(ev,()=>clearTimeout(repTimer));
 $('listItems').addEventListener('click',e=>{
-  const L=curList();if(!L)return;const rm=e.target.closest('[data-lrm]'),pl=e.target.closest('[data-play]');
+  const L=curList();if(!L)return;const rm=e.target.closest('[data-lrm]'),pl=e.target.closest('[data-play]'),rb=e.target.closest('.lrepb');
+  if(rb){if(repLong){repLong=false;return;}const it=L.items.find(i=>i.key===rb.dataset.rep);if(it){const n=(it.rep|0||1)+1;setRep(L,it,n>REP_MAX?1:n,rb);}return;}
   if(rm)removeFromList(L,rm.dataset.lrm);else if(pl)playListFrom(L,pl.dataset.play,{prep:true});
 });
 // 並べ替え（ドラッグ&ドロップ：タッチでも使えるようPointer Eventsで実装。リスト名は変わらない）
@@ -1102,9 +1119,20 @@ async function loadMotion(f,o={}){
 }
 // ---- 再生制御：ループ／リスト連続再生 ----
 const loopOn=()=>$('loop').checked;
+// リストの1件が1回再生し終わった時：指定回数に達していなければ同じモーションをもう一度、達していれば次へ
+function onItemEnd(){
+  if(player.done||!playCtx)return;
+  const L=lists.find(l=>l.id===playCtx.listId),it=L&&L.items.find(i=>i.key===playCtx.key),reps=Math.max(1,it?.rep|0||1),a=player.action;
+  if(a&&(playCtx.n||1)<reps){   // 読み込み直さず、そのまま頭から再生し直す（切り替えの待ちも物理のリセットも起きない）
+    playCtx.n=(playCtx.n||1)+1;a.reset();a.play();
+    if(motionFile)status(motionFile.name+' を再生中'+listTag());
+    return;
+  }
+  player.done=true;playNext();
+}
 function armPlayer(mx,act){
   player={mixer:mx,action:act,done:false};
-  mx.addEventListener('finished',()=>{if(player.mixer!==mx||player.done||player.frozen)return;player.done=true;if(playCtx)playNext();});   // 1回再生が終わった時だけ発火（LoopOnce）
+  mx.addEventListener('finished',()=>{if(player.mixer!==mx||player.done||player.frozen)return;if(playCtx)onItemEnd();else player.done=true;});   // 1回再生が終わった時だけ発火（LoopOnce）
   applyLoop(false);
 }
 // 'finished'が来ない場合（物理の例外・afterglow等）でも次へ進める保険
@@ -1115,7 +1143,7 @@ function physFail(){   // 例外が続くなら、まず物理を切る。それ
 }
 function checkEnd(){
   const a=player.action;if(!a||player.done||player.frozen||!playCtx||advancing||a.loop!==THREE.LoopOnce)return;
-  const d=a.getClip().duration;if(d>0&&a.time>=d-1e-4){player.done=true;playNext();}
+  const d=a.getClip().duration;if(d>0&&a.time>=d-1e-4)onItemEnd();
 }
 function applyLoop(restart){
   const a=player.action;if(!a)return;
@@ -1149,6 +1177,7 @@ function panBy(dx,dy){   // 画面上の移動量(px)→注視点の平行移動
 canvas.addEventListener('wheel',e=>{e.preventDefault();const d=e.deltaMode===1?e.deltaY*33:e.deltaY;
   zoom=THREE.MathUtils.clamp(zoom*Math.exp(-d*.0015),.5,3.5);$('zoom').value=zoom;$('zoomText').textContent=zoom.toFixed(2)+'×';updateCamera();},{passive:false});
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
+document.addEventListener('contextmenu',e=>{if(!e.target.closest('input,#status'))e.preventDefault();});
 if(matchMedia('(pointer:fine)').matches)$('hint').textContent='ドラッグ：回転 ／ 右ドラッグ・Shift+ドラッグ：移動 ／ ホイール：拡大縮小 ／ クリック：表情変更';
 const pointers=new Map();let pinchStart=0,pinchZoom=1;
 const point=e=>({x:e.clientX,y:e.clientY});
