@@ -2363,6 +2363,7 @@ let activeBlend = null,
 /** 再生中のモーションを止めて初期ポーズへ戻す（補間・指の曲げ・helper を破棄）。 */
 function stopMotion() {
   activeBlend = pendingBlendFrom = null;
+  gazeApplied = null; // 初期ポーズへ戻すので、前のモーションの頭の姿勢を書き戻さない
   playback = {mixer: null, action: null, done: false};
   fingerCurlTargets = null;
   vrmMixer?.stopAllAction();
@@ -2519,6 +2520,7 @@ function blendNodes() {
 }
 /** 現在の全ボーンの姿勢を記録する（つなぎ補間の「前の最後の姿勢」）。 */
 function blendCapture() {
+  releaseGaze(); // 視線の補正を外した素の姿勢を記録する（補間のあとで視線が二重にかからないように）
   return vrm || mmdMesh ? blendNodes().map(n => ({n, q: n.quaternion.clone(), p: n.position.clone()})) : null;
 }
 /** つなぎ補間を1フレーム進める。姿勢の差が大きすぎる場合は補間しない。 */
