@@ -1,7 +1,16 @@
 <!doctype html>
+<!--
+  3D Model Viewer v1.00 / build 2026-10-19
+  ブラウザー上で 3D モデルを表示し、モーション(VRMA/VMD)を再生・変換・保存する単一HTMLアプリ。
+  対応モデル：GLB / VRM / MMD(PMX・PMD, ZIP可) / FBX / OBJ
+  使用モジュール：three 0.160.0, @pixiv/three-vrm 3.0.0, @pixiv/three-vrm-animation 3.0.0, fflate 0.8.2
+                  （MMD物理のみ Ammo.js を必要時に読み込み）。詳細は下のモジュールスクリプト冒頭と THIRD_PARTY_NOTICES.md を参照。
+  外部ライブラリは CDN(cdn.jsdelivr.net)から読み込むため、インターネット接続が必要です。
+-->
 <html lang="ja"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>3Dモデルビューアー</title>
+<!-- ===== スタイル：ダークテーマ、タッチ向けの大きめボタン、縦置き/横置きパネル ===== -->
 <style>
 :root{color-scheme:dark;--bg:#101116;--line:#343846;--accent:#8ed9ce}
 *{box-sizing:border-box}
@@ -73,15 +82,19 @@ input[type=search]{-webkit-user-select:text;user-select:text}
 #status{-webkit-user-select:text;user-select:text;pointer-events:auto}
 </style></head>
 <body>
+<!-- ===== 3D表示領域（Three.jsがこのcanvasへ描画） ===== -->
 <div id="view"><canvas id="c"></canvas></div>
-<header><div class="brand">◈ 3D Model Viewer</div><div id="status">モデルを選択してください</div></header>
+<header><div class="brand">◈ 3D Model Viewer <span id="ver" style="font-weight:400;font-size:11px;color:#8f99ab"></span></div><div id="status">モデルを選択してください</div></header>
 <div id="hint">ドラッグ：回転 ／ 2本指スワイプ：移動 ／ ピンチ：拡大・縮小 ／ タップ：表情変更</div>
+<!-- ===== 操作パネル：ファイル選択・リスト・履歴・拡大率/接地補正・表情・モーフ ===== -->
 <section id="panel"><div id="pgrip" title="ドラッグでサイズ変更"></div><div id="pbody">
   <div class="row">
     <label class="pick primary">モデルを開く<input id="modelFile" type="file"></label>
     <label class="pick">モーションを開く<input id="motionFile" type="file"></label>
     <label class="pick chk"><input type="checkbox" id="loop" checked><span>ループ</span></label>
     <label class="pick chk"><input type="checkbox" id="physics" checked><span>物理</span></label>
+    <label class="pick chk"><input type="checkbox" id="gaze"><span>視線</span></label>
+    <label class="pick chk"><input type="checkbox" id="restore" checked><span>起動時に復帰</span></label>
     <button id="reset">視点リセット</button>
     <button id="save">保存</button>
     <button id="dock">縦置きへ</button>
@@ -131,6 +144,7 @@ input[type=search]{-webkit-user-select:text;user-select:text}
   </div>
 </div></section>
 <div id="popup" hidden></div>
+<!-- ===== 外部モジュール（版を固定。3D描画・VRM・ZIP展開） ===== -->
 <script type="importmap">
 {"imports":{
 "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
@@ -140,6 +154,39 @@ input[type=search]{-webkit-user-select:text;user-select:text}
 "@pixiv/three-vrm-animation":"https://cdn.jsdelivr.net/npm/@pixiv/three-vrm-animation@3.0.0/lib/three-vrm-animation.module.js"}}
 </script>
 <script type="module">
+/*
+ * ============================================================================
+ *  3D Model Viewer — アプリ本体（ES Modules・単一HTML）
+ * ============================================================================
+ *  概要
+ *    GLB / VRM / MMD(PMX・PMD) / FBX / OBJ のモデルを表示し、VRMA・VMD モーションを
+ *    再生・変換・保存するブラウザーアプリ。モデルとモーションは独立して読み込める。
+ *
+ *  使用モジュール（importmap で版を固定。CDN: cdn.jsdelivr.net）
+ *    three@0.160.0                      3D描画・アニメーション・数学
+ *    three/addons（three@0.160.0に同梱）  GLTFLoader / MMDLoader / FBXLoader / OBJLoader /
+ *                                        MTLLoader / MMDAnimationHelper
+ *                                        ・GLTFExporter … GLB書き出し時に動的import
+ *                                        ・MMDParser … MMDLoaderが内部で使用
+ *                                        ・libs/ammo.wasm.js (Ammo.js) … MMD物理用。必要時のみscriptで読み込み
+ *    @pixiv/three-vrm@3.0.0             VRM読み込み・ヒューマノイド・表情・揺れもの
+ *    @pixiv/three-vrm-animation@3.0.0   VRMAの読み込みとAnimationClip化
+ *    fflate@0.8.2                       ZIP展開（MMDモデルのZIP）
+ *
+ *  使用するブラウザー機能
+ *    WebGL / IndexedDB（履歴・リスト） / localStorage（設定） / Pointer Events /
+ *    createImageBitmap + Canvas（テクスチャ縮小） / ResizeObserver / TextDecoder(shift_jis)
+ *
+ *  構成（上から順）
+ *    1. シーン・カメラ・照明・状態変数
+ *    2. 共通ヘルパー（shared/common.js 由来：接地補正・VMD/VRMA変換）※名前は共通のまま
+ *    3. モデルの読み込み・カメラ      4. 表情（モーフ）
+ *    5. 履歴（IndexedDB）            6. ポップアップ・物理・ループ設定
+ *    7. 再生リスト                   8. クリップのキャッシュとリスト再生
+ *    9. 保存（VRMA/GLB書き出し）     10. モーション再生（MMD物理・指・補間・読み込み）
+ *   11. 再生制御・UIイベント・カメラ操作  12. パネルの縦横配置・起動処理
+ * ============================================================================
+ */
 import * as THREE from 'three';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import {MMDLoader} from 'three/addons/loaders/MMDLoader.js';
@@ -147,44 +194,107 @@ import {FBXLoader} from 'three/addons/loaders/FBXLoader.js';
 import {OBJLoader} from 'three/addons/loaders/OBJLoader.js';
 import {MTLLoader} from 'three/addons/loaders/MTLLoader.js';
 import {MMDAnimationHelper} from 'three/addons/animation/MMDAnimationHelper.js';
-import {VRMLoaderPlugin,VRMUtils} from '@pixiv/three-vrm';
-import {VRMAnimationLoaderPlugin,createVRMAnimationClip} from '@pixiv/three-vrm-animation';
+import {VRMLoaderPlugin, VRMUtils} from '@pixiv/three-vrm';
+import {VRMAnimationLoaderPlugin, createVRMAnimationClip} from '@pixiv/three-vrm-animation';
 import {unzipSync} from 'fflate';
 
-const $=id=>document.getElementById(id), canvas=$('c'), val=id=>+$(id).value;   // val：共通関数(gv)が接地補正などの設定値を読む。要素が無い設定は既定値になる
-const renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:false});
-renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+// ---- 1. シーン・カメラ・照明・状態変数 ----
+// byId：getElementById の短縮。val：共通関数(gv)が設定値を読む入口（名前は共通のまま）
+const byId = id => document.getElementById(id),
+  canvas = byId('c'),
+  val = id => +byId(id).value; // val：共通関数(gv)が接地補正などの設定値を読む。要素が無い設定は既定値になる
+const renderer = new THREE.WebGLRenderer({canvas, antialias: true, alpha: false});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setClearColor(0x101116);
-renderer.outputColorSpace=THREE.SRGBColorSpace;
-const scene=new THREE.Scene(); scene.background=new THREE.Color(0x101116);
-const camera=new THREE.PerspectiveCamera(35,1,.01,1000); camera.position.set(0,1.3,4.5);
-scene.add(new THREE.HemisphereLight(0xffffff,0x4c5266,2));
-const key=new THREE.DirectionalLight(0xffffff,3); key.position.set(3,5,4); scene.add(key);
-const fill=new THREE.DirectionalLight(0x9bbcff,1.2); fill.position.set(-4,2,-3); scene.add(fill);
-const floor=new THREE.Mesh(new THREE.CircleGeometry(2.4,64),new THREE.MeshStandardMaterial({color:0x20232b,roughness:.95}));
-floor.rotation.x=-Math.PI/2; floor.position.y=-.015; scene.add(floor);
-const grid=new THREE.GridHelper(4,20,0x3c4554,0x292f3b); grid.position.y=-.008; scene.add(grid);
-const root=new THREE.Group(); scene.add(root);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x101116);
+const camera = new THREE.PerspectiveCamera(35, 1, 0.01, 1000);
+camera.position.set(0, 1.3, 4.5);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x4c5266, 2));
+const keyLight = new THREE.DirectionalLight(0xffffff, 3);
+keyLight.position.set(3, 5, 4);
+scene.add(keyLight);
+const fillLight = new THREE.DirectionalLight(0x9bbcff, 1.2);
+fillLight.position.set(-4, 2, -3);
+scene.add(fillLight);
+const floorMesh = new THREE.Mesh(
+  new THREE.CircleGeometry(2.4, 64),
+  new THREE.MeshStandardMaterial({color: 0x20232b, roughness: 0.95})
+);
+floorMesh.rotation.x = -Math.PI / 2;
+floorMesh.position.y = -0.015;
+scene.add(floorMesh);
+const gridHelper = new THREE.GridHelper(4, 20, 0x3c4554, 0x292f3b);
+gridHelper.position.y = -0.008;
+scene.add(gridHelper);
+const modelRoot = new THREE.Group();
+scene.add(modelRoot);
 
-let panMode=false,motionFile=null,modelFile=null,player={mixer:null,action:null,done:false},playCtx=null,lists=[],curListId=null,springMgr=null,curIds={model:null,motion:null},curl=null,activeObject=null,vrm=null,mmdMesh=null,helper=null,mixer=null,currentExp='neutral',auto=false;
-let zipFiles=new Map(),urls=[],radius=2.5,targetY=1,drag=false,lastX=0,lastY=0,downX=0,downY=0,moved=0,yaw=0,pitch=0,zoom=1;
-const clock=new THREE.Clock();
-const pan=new THREE.Vector3();let lastMid=null;   // 2本指スワイプによる注視点の平行移動
-const status=s=>{$('status').textContent=s;};
-let morphList=[],advancing=false,dock='h',mmdPhys=null,physHold=0,physErr=0;
-const PHYS_HOLD=0.5;   // 開始直後この秒数だけ剛体をボーンに吸着（腕と服の干渉で服がめくれるのを防ぐ）
+let isPanDrag = false; // マウスの右/中ドラッグ・Shift+ドラッグで平行移動中か
+let currentMotionFile = null; // 選択中のモーションファイル（モデル未読込でも保持）
+let currentModelFile = null; // 選択中のモデルファイル
+let playback = {mixer: null, action: null, done: false}; // 再生状態 {mixer, action, done, frozen}
+let listPlayback = null; // リスト再生の現在位置 {listId, key, n}。単体再生では null
+let savedLists = []; // 保存済みの再生リスト
+let selectedListId = null; // 選択中リストのID
+let vrmSpringBoneManager = null; // VRMの揺れもの(SpringBone)管理。物理OFF時は vrm 側から外す
+let currentHistoryIds = {model: null, motion: null}; // 現在使用中の履歴ID {model, motion}
+let fingerCurlTargets = null; // 指の曲げ対象一覧（setupCurl〜で作成）
+let loadedObject = null; // シーンに載っている現在のモデル（VRM/MMD/GLB/FBX/OBJ共通）
+let vrm = null; // VRMインスタンス（VRM以外は null）
+let mmdMesh = null; // MMDのSkinnedMesh（MMD以外は null）
+let mmdHelper = null; // MMDAnimationHelper（再生中のみ）
+let vrmMixer = null; // VRM用 AnimationMixer
+let currentExpressionName = 'neutral'; // 現在の表情プリセット名
+let autoRotate = false; // 自動回転ON/OFF
+let archiveFiles = new Map(); // ZIP内ファイル（小文字名→File）。テクスチャ参照の解決に使う
+let objectUrls = []; // 作成した Object URL（読み込み直しで解放）
+let cameraRadius = 2.5; // カメラ距離の基準（モデルの大きさから決まる）
+let cameraTargetY = 1; // 注視点の高さ
+let isRotateDragging = false; // 回転ドラッグ中か
+let lastPointerX = 0; // 直前のポインター位置X
+let lastPointerY = 0; // 直前のポインター位置Y
+let dragStartX = 0; // ドラッグ開始位置X
+let dragStartY = 0; // ドラッグ開始位置Y
+let dragDistance = 0; // ドラッグ量（小さければタップ扱い）
+let yaw = 0; // カメラの水平角
+let pitch = 0; // カメラの上下角
+let zoom = 1; // 拡大率
+const clock = new THREE.Clock();
+const panOffset = new THREE.Vector3();
+let lastPinchMidpoint = null; // 2本指スワイプによる注視点の平行移動
+/** 画面下部のステータス表示を更新する。 */
+const setStatus = s => {
+  byId('status').textContent = s;
+};
+let morphList = []; // 表情モーフ一覧 [{name, val, set}]
+let isAdvancingList = false; // リストの次項目へ進行中か（二重進行の防止）
+let dockMode = 'h'; // パネル配置 'h'=横置き / 'v'=縦置き
+let mmdPhysics = null; // MMD物理（モデルごとに1回だけ作る）
+let physicsHoldSec = 0; // 物理吸着の残り秒数
+let physicsErrorCount = 0; // 物理の連続エラー回数
+const PHYSICS_HOLD_SEC = 0.5; // 開始直後この秒数だけ剛体をボーンに吸着（腕と服の干渉で服がめくれるのを防ぐ）
 
-// ---- lanternから取り込み：zip内の文字化け修正 / VRMAの仕様補正 / VRMA→MMD変換 ----
-const MMD_SCALE=0.08, utf8=new TextDecoder('utf-8',{fatal:true}), sjis=new TextDecoder('shift_jis');
+// ---- 共通モジュールから取り込み：zip内の文字化け修正 / VRMAの仕様補正 / VRMA→MMD変換 ----
+const MMD_SCALE = 0.08,
+  utf8 = new TextDecoder('utf-8', {fatal: true}),
+  sjis = new TextDecoder('shift_jis');
+
 // ==== shared/common.js ====
+// ★この区間は共通モジュール（shared/common.js）から埋め込まれたコードです。
+//   ほかのビューアーと共有しているため、関数名・変数名は共通のまま維持し、コメントのみ追加しています。
+//   外部から参照する名前：val（スライダー値の取得）, THREE, MMD_SCALE（MMD単位→メートル換算 0.08）
 // model_viewer と vrm_lantern で共通のモーション変換・読み込み補助。build.js が各HTMLの //@@include の位置に埋め込む。
 // 依存：THREE, MMD_SCALE, （任意）val(id) / st(text)。val・st が無い、またはスライダーが無い設定は既定値で動く（gv 参照）。
+/** ZIP内ファイル名の文字化けを補正する（UTF-8で読めなければShift_JISで読み直す）。 */
 function zipName(n) {                                    // 旧Windows製zipは名前が Shift_JIS のことがある → 文字化けを直す
   if (!/[\x80-\xff]/.test(n) || /[^\x00-\xff]/.test(n)) return n;
   const b = Uint8Array.from(n, c => c.charCodeAt(0));
   try { return utf8.decode(b); } catch { return sjis.decode(b); }
 }
 
+/** VRMAのglb(JSONチャンク)に specVersion が無い場合に補って、three-vrm-animation が読めるようにする。引数・戻り値：ArrayBuffer。 */
 function fixVrmaSpec(buf) {
   try {
     const dv = new DataView(buf);
@@ -206,6 +316,7 @@ function fixVrmaSpec(buf) {
   } catch (e) { console.warn('fixVrmaSpec', e); return buf; }
 }
 
+/** 大きな画像テクスチャを縮小して返す（メモリ不足対策）。引数：File, 最大辺px。読めない形式(tga等)はそのまま返す。戻り値：Promise<File>。 */
 async function shrinkImg(f,max=1024){   // 大きなテクスチャは縮小して渡す（4K画像が何枚もあるとメモリ不足でタブごと落ちる）。読めない形式（tga等）はそのまま
   if(!/\.(png|jpe?g|bmp|webp)$/i.test(f.name))return f;
   try{
@@ -220,6 +331,7 @@ async function shrinkImg(f,max=1024){   // 大きなテクスチャは縮小し�
   }catch{return f;}
 }
 
+/** 接地補正の持ち上げ量 sm を、腰が上がる時以外は急に戻さないよう in-place で制限する。rawY(i)：元の腰の高さ。 */
 function limitDecay(sm, rawY, base = 0.03) {   // base：1フレームで戻してよい量（既定はMMD単位）
   let prev = rawY(0);
   for (let i = 1; i < sm.length; i++) {
@@ -234,11 +346,14 @@ function limitDecay(sm, rawY, base = 0.03) {   // base：1フレームで戻し�
 //   mgr   全体の強さ（1。0で補正なし）
 //   mhip  尻の高さ：股関節が床から保つ高さ（脚の長さに対する％。既定8）
 //   msole 足裏の余裕：かかと・つま先が床から保つ高さ（脚の長さに対する％。既定0＝床ぴったり）
+/** 設定値の取得（スライダー値）。val() が無い・値が不正なら既定値 d を返す。接地補正のスライダー id：mgr / mhip / msole / mxg。 */
 function gv(id, d) { try { const v = typeof val === 'function' ? val(id) : d; return Number.isFinite(v) ? v : d; } catch (e) { return d; } }
 var groundFixLast = '';   // 直近の接地補正の結果（ビューアーのステータス表示用）
+/** 接地補正の結果文字列を groundFixLast に残す（ビューアーのステータス表示用）。 */
 function groundNote(t) { groundFixLast = t; if (typeof st === 'function') st(t); }
 
 // 必要な持ち上げ量をなめらかにする：前後2フレームで最大を取ってから平均（必ず必要量以上になる）
+/** 必要な持ち上げ量 dy を前後2フレームの最大→平均でなめらかにして返す（必ず必要量以上になる）。 */
 function smoothNeed(dy) {
   const N = dy.length, mx = new Float32Array(N), sm = new Float32Array(N);
   for (let i = 0; i < N; i++) { let m = 0; for (let j = Math.max(0, i - 2); j <= Math.min(N - 1, i + 2); j++) m = Math.max(m, dy[j]); mx[i] = m; }
@@ -249,6 +364,7 @@ function smoothNeed(dy) {
 // MMD用。tracks=.bones[…] のトラック群、times=30fpsの時刻列。ikOn=true（VMD）は足IKが脚を決めるので股関節だけ見る。
 // ikOn=false（VRMA→MMD）は 股関節・ひざ・足首・足裏（かかと／つま先）を見る。足裏は「立ち姿の足首から足裏までの距離」を足の向きで回して求める。
 // 返り値：補正したトラック群（補正不要なら渡したものをそのまま返す）
+/** MMD用の接地補正。座り込み等で床下に沈む分だけセンターを持ち上げた新しいトラック群を返す。ikOn=true(VMD)は股関節のみ、false(VRMA→MMD)は股関節・ひざ・足首・足裏を見る。 */
 function groundFixMMD(tracks, mesh, times, ikOn) {
   const gk = gv('mgr', 1), N = times.length;
   if (!(gk > 0) || !N) return tracks;
@@ -307,6 +423,7 @@ function groundFixMMD(tracks, mesh, times, ikOn) {
 }
 
 // VMD→MMD：animationBuilder で作ったクリップに接地補正を足す
+/** VMD→MMD：animationBuilder で作ったクリップに接地補正を足して返す。 */
 function groundFixMMDClip(clip, mesh) {
   const N = Math.ceil(clip.duration * 30 - 1e-3) + 1, times = new Float32Array(N);
   for (let i = 0; i < N; i++) times[i] = Math.min(i / 30, clip.duration);
@@ -316,6 +433,7 @@ function groundFixMMDClip(clip, mesh) {
 
 // VRM用（VRMA→VRM）。createVRMAnimationClip で作ったクリップに足す。腰の位置・向きと脚の向きから、股関節・ひざ・足首・足裏（かかと／つま先）の高さを順に求め、足りない分だけ腰を持ち上げる。
 // 正規化ボーン（回転なしの基準姿勢）で計算する。床は y=0。呼ぶ時点で正規化ボーンが基準姿勢に戻っていること（stopMotion 後）。
+/** VRM用の接地補正（VRMA→VRM）。正規化ボーン基準で、足りない分だけ腰(hips)の位置を持ち上げたクリップを返す。 */
 function groundFixVRM(clip, vrm) {
   const gk = gv('mgr', 1);
   if (!(gk > 0)) return clip;
@@ -364,6 +482,7 @@ function groundFixVRM(clip, vrm) {
   } catch (e) { console.warn('接地補正(VRM)', e); return clip; }
 }
 
+/** VRMAのアニメーションをMMDモデルのボーン名・向きへ変換し、接地補正まで行ったAnimationClipを返す。 */
 function vrmaToMMD(anim, mesh) {
   mesh.pose();
   const bn = n => mesh.skeleton.getBoneByName(n);
@@ -413,6 +532,7 @@ function vrmaToMMD(anim, mesh) {
   return new THREE.AnimationClip('vrma', dur, groundFixMMD(tracks, mesh, times, false));
 }
 
+/** VMDモーションをVRM(正規化ボーン)用のAnimationClipへ変換する。腕・上半身はFK、脚は足IKを2ボーンIKで近似。表情モーフはVRM表情へ対応付ける。 */
 function vmdToVRM(vmd,v){
   const hu=v.humanoid, node=n=>hu.getNormalizedBoneNode(n), flip=v.meta?.metaVersion==='0';
   const grp=(arr,k)=>{const m=new Map();for(const x of arr||[]){const n=x[k];(m.get(n)||m.set(n,[]).get(n)).push(x);}m.forEach(a=>a.sort((p,q)=>p.frameNum-q.frameNum));return m;};
@@ -516,741 +636,2473 @@ function vmdToVRM(vmd,v){
 }
 // ==== /shared/common.js ====
 
-
-
 // ---- 新規：VMD→VRM（腕・上半身はFK、脚は足IKを2ボーンIKで近似。MMDの標準的なAポーズ約35度を仮定して腕を補正）----
 
-
-function clearModel(){
-  disposeHelper();destroyPhysics(mmdPhys);
-  if(activeObject){root.remove(activeObject);activeObject.traverse(o=>{o.geometry?.dispose?.();
-    if(o.material)for(const m of(Array.isArray(o.material)?o.material:[o.material])){for(const k of['map','normalMap','roughnessMap','metalnessMap','emissiveMap','alphaMap'])m[k]?.dispose?.();m.dispose?.();}});}
-  activeObject=vrm=mmdMesh=helper=mixer=curl=mmdPhys=null; morphList=[]; buildExpressions(); zipFiles.clear(); urls.forEach(u=>URL.revokeObjectURL(u)); urls=[];
+// ============================================================================
+// 3. モデルの読み込み・カメラ
+// ============================================================================
+/** 現在のモデルを破棄する（物理・ジオメトリ・テクスチャ・Object URLを解放し、状態を初期化）。 */
+function clearModel() {
+  disposeMmdHelper();
+  destroyPhysics(mmdPhysics);
+  if (loadedObject) {
+    modelRoot.remove(loadedObject);
+    loadedObject.traverse(o => {
+      o.geometry?.dispose?.();
+      if (o.material)
+        for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+          for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'alphaMap'])
+            m[k]?.dispose?.();
+          m.dispose?.();
+        }
+    });
+  }
+  loadedObject = vrm = mmdMesh = mmdHelper = vrmMixer = fingerCurlTargets = mmdPhysics = null;
+  morphList = [];
+  buildExpressionUI();
+  archiveFiles.clear();
+  objectUrls.forEach(u => URL.revokeObjectURL(u));
+  objectUrls = [];
 }
-function fitObject(obj){
-  obj.updateMatrixWorld(true);const box=new THREE.Box3().setFromObject(obj);
-  if(!Number.isFinite(box.min.y)||box.isEmpty())return;
-  const size=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3()),h=Math.max(size.y,.1);
-  obj.position.x-=center.x;obj.position.z-=center.z;obj.position.y-=box.min.y;
-  radius=Math.max(h*1.7,Math.max(size.x,size.z)*1.6,.8);targetY=h*.48;
-  camera.near=Math.max(.001,radius/1000);camera.far=radius*100;camera.updateProjectionMatrix();
-  zoom=1;pan.set(0,0,0);$('zoom').value='1';$('zoomText').textContent='1.0×';updateCamera();
+/** モデルを床(y=0)・中央に合わせ、大きさに応じてカメラ距離と注視点を設定する。 */
+function fitObjectToView(obj) {
+  obj.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(obj);
+  if (!Number.isFinite(box.min.y) || box.isEmpty()) return;
+  const size = box.getSize(new THREE.Vector3()),
+    center = box.getCenter(new THREE.Vector3()),
+    height = Math.max(size.y, 0.1);
+  obj.position.x -= center.x;
+  obj.position.z -= center.z;
+  obj.position.y -= box.min.y;
+  cameraRadius = Math.max(height * 1.7, Math.max(size.x, size.z) * 1.6, 0.8);
+  cameraTargetY = height * 0.48;
+  camera.near = Math.max(0.001, cameraRadius / 1000);
+  camera.far = cameraRadius * 100;
+  camera.updateProjectionMatrix();
+  zoom = 1;
+  panOffset.set(0, 0, 0);
+  byId('zoom').value = '1';
+  byId('zoomText').textContent = '1.0×';
+  updateCamera();
 }
-function updateCamera(){
-  const dist=radius*2.25/zoom;
-  const cy=targetY+pan.y;
-  camera.position.set(pan.x+Math.sin(yaw)*Math.cos(pitch)*dist,cy+Math.sin(pitch)*dist,pan.z+Math.cos(yaw)*Math.cos(pitch)*dist);
-  camera.lookAt(pan.x,cy,pan.z);
+/** yaw / pitch / zoom / panOffset からカメラ位置と向きを更新する。 */
+function updateCamera() {
+  const dist = (cameraRadius * 2.25) / zoom;
+  const cy = cameraTargetY + panOffset.y;
+  camera.position.set(
+    panOffset.x + Math.sin(yaw) * Math.cos(pitch) * dist,
+    cy + Math.sin(pitch) * dist,
+    panOffset.z + Math.cos(yaw) * Math.cos(pitch) * dist
+  );
+  camera.lookAt(panOffset.x, cy, panOffset.z);
 }
-function resize(){const r=$('view').getBoundingClientRect();renderer.setSize(r.width,r.height,false);camera.aspect=Math.max(.1,r.width/r.height);camera.updateProjectionMatrix();}
-new ResizeObserver(resize).observe($('view'));resize();
+/** 表示領域のサイズに合わせてレンダラーとカメラのアスペクト比を更新する。 */
+function resizeRenderer() {
+  const r = byId('view').getBoundingClientRect();
+  renderer.setSize(r.width, r.height, false);
+  camera.aspect = Math.max(0.1, r.width / r.height);
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(resizeRenderer).observe(byId('view'));
+resizeRenderer();
 
-
-let modelTok=0,loadChain=Promise.resolve();
-function loadFile(file,hid){const mt=++modelTok;loadChain=loadChain.then(()=>mt===modelTok?loadFileInner(file,hid):null).catch(e=>console.warn(e));return loadChain;}
-async function loadFileInner(file,hid){
-  if(!file)return;clearModel();modelFile=null;curIds.model=null;status('読み込み中…');
-  try{
-    const ext=file.name.split('.').pop().toLowerCase();
-    if(ext==='zip'||ext==='pmx'||ext==='pmd'||ext==='fbx'||ext==='obj'){
-      if(ext==='zip'){
-        const entries=unzipSync(new Uint8Array(await file.arrayBuffer()));
-        for(const [path,data] of Object.entries(entries)){if(path.endsWith('/'))continue;
-          const name=zipName(path).split(/[\\/]/).pop();if(!name)continue;zipFiles.set(name.toLowerCase(),new File([data],name));}
-      }else zipFiles.set(file.name.toLowerCase(),file);
-      const keys=[...zipFiles.keys()];   // 画像は1枚ずつ縮小（一度に展開しない）
-      for(let n=0;n<keys.length;n++){
-        if(n%2===0){status('テクスチャ準備中… '+n+'/'+keys.length);await new Promise(r=>setTimeout(r));}
-        zipFiles.set(keys[n],await shrinkImg(zipFiles.get(keys[n])));
+let modelLoadToken = 0,
+  modelLoadQueue = Promise.resolve();
+/** モデル読み込みを直列化する。連続で選んだ場合は最後に選んだものだけを読み込み、古い読み込みが後から上書きしないようにする。 */
+function loadModelFile(file, historyId) {
+  const mt = ++modelLoadToken;
+  modelLoadQueue = modelLoadQueue
+    .then(() => (mt === modelLoadToken ? loadModelFileNow(file, historyId) : null))
+    .catch(e => console.warn(e));
+  return modelLoadQueue;
+}
+/** モデル本体の読み込み。zip/pmx/pmd/fbx/obj(MMD系)と glb/vrm を拡張子で分岐し、読み込み後に表情UI・物理・履歴保存・モーション再適用を行う。 */
+async function loadModelFileNow(file, historyId) {
+  if (!file) return;
+  clearModel();
+  currentModelFile = null;
+  currentHistoryIds.model = null;
+  setStatus('読み込み中…');
+  try {
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (ext === 'zip' || ext === 'pmx' || ext === 'pmd' || ext === 'fbx' || ext === 'obj') {
+      if (ext === 'zip') {
+        const entries = unzipSync(new Uint8Array(await file.arrayBuffer()));
+        for (const [path, data] of Object.entries(entries)) {
+          if (path.endsWith('/')) continue;
+          const name = zipName(path).split(/[\\/]/).pop();
+          if (!name) continue;
+          archiveFiles.set(name.toLowerCase(), new File([data], name));
+        }
+      } else archiveFiles.set(file.name.toLowerCase(), file);
+      const keys = [...archiveFiles.keys()]; // 画像は1枚ずつ縮小（一度に展開しない）
+      for (let n = 0; n < keys.length; n++) {
+        if (n % 2 === 0) {
+          setStatus('テクスチャ準備中… ' + n + '/' + keys.length);
+          await new Promise(r => setTimeout(r));
+        }
+        archiveFiles.set(keys[n], await shrinkImg(archiveFiles.get(keys[n])));
       }
-      const model=[...zipFiles.values()].find(f=>/\.(pmx|pmd|fbx|obj)$/i.test(f.name));
-      if(!model)throw new Error('ZIP内にPMX/PMD/FBX/OBJが見つかりません');
-      const manager=new THREE.LoadingManager();
-      manager.setURLModifier(url=>{let raw;try{raw=decodeURIComponent(url.split(/[\\/]/).pop().split('?')[0]);}catch{raw=url.split(/[\\/]/).pop();}
-        const f=zipFiles.get(raw.toLowerCase());if(f){const u=URL.createObjectURL(f);urls.push(u);return u;}return url;});
-      const u=URL.createObjectURL(model)+'#.'+model.name.split('.').pop().toLowerCase();urls.push(u);   // MMDLoaderはURL末尾の拡張子でpmx/pmdを判定するため付与
-      const mext=model.name.split('.').pop().toLowerCase();
-      if(mext==='fbx'){
-        activeObject=await new FBXLoader(manager).loadAsync(u);
-      }else if(mext==='obj'){
-        const objL=new OBJLoader(manager),mtl=[...zipFiles.values()].find(f=>/\.mtl$/i.test(f.name));
-        if(mtl){const mu=URL.createObjectURL(mtl);urls.push(mu);objL.setMaterials(await new MTLLoader(manager).loadAsync(mu));}
-        activeObject=await objL.loadAsync(u);
-      }else{
-        mmdMesh=await new MMDLoader(manager).loadAsync(u);activeObject=mmdMesh;
+      const model = [...archiveFiles.values()].find(f => /\.(pmx|pmd|fbx|obj)$/i.test(f.name));
+      if (!model) throw new Error('ZIP内にPMX/PMD/FBX/OBJが見つかりません');
+      const manager = new THREE.LoadingManager();
+      manager.setURLModifier(url => {
+        let raw;
+        try {
+          raw = decodeURIComponent(url.split(/[\\/]/).pop().split('?')[0]);
+        } catch {
+          raw = url.split(/[\\/]/).pop();
+        }
+        const f = archiveFiles.get(raw.toLowerCase());
+        if (f) {
+          const objectUrl = URL.createObjectURL(f);
+          objectUrls.push(objectUrl);
+          return objectUrl;
+        }
+        return url;
+      });
+      const objectUrl = URL.createObjectURL(model) + '#.' + model.name.split('.').pop().toLowerCase();
+      objectUrls.push(objectUrl); // MMDLoaderはURL末尾の拡張子でpmx/pmdを判定するため付与
+      const modelExt = model.name.split('.').pop().toLowerCase();
+      if (modelExt === 'fbx') {
+        loadedObject = await new FBXLoader(manager).loadAsync(objectUrl);
+      } else if (modelExt === 'obj') {
+        const objLoader = new OBJLoader(manager),
+          mtl = [...archiveFiles.values()].find(f => /\.mtl$/i.test(f.name));
+        if (mtl) {
+          const mtlUrl = URL.createObjectURL(mtl);
+          objectUrls.push(mtlUrl);
+          objLoader.setMaterials(await new MTLLoader(manager).loadAsync(mtlUrl));
+        }
+        loadedObject = await objLoader.loadAsync(objectUrl);
+      } else {
+        mmdMesh = await new MMDLoader(manager).loadAsync(objectUrl);
+        loadedObject = mmdMesh;
       }
-      if(!mmdMesh)activeObject.traverse(o=>{if(o.isMesh){o.frustumCulled=false;o.castShadow=true;}});
-      root.add(activeObject);fitObject(activeObject);status(model.name+' を表示中');
-    }else{
-      const loader=new GLTFLoader();loader.register(p=>new VRMLoaderPlugin(p));
-      const u=URL.createObjectURL(file);urls.push(u);const gltf=await loader.loadAsync(u);
-      vrm=gltf.userData.vrm||null;activeObject=vrm?vrm.scene:gltf.scene;if(vrm)VRMUtils.rotateVRM0(vrm);
-      activeObject.traverse(o=>{if(o.isMesh){o.frustumCulled=false;o.castShadow=true;}});
-      root.add(activeObject);fitObject(activeObject);status(file.name+' を表示中');
+      if (!mmdMesh)
+        loadedObject.traverse(o => {
+          if (o.isMesh) {
+            o.frustumCulled = false;
+            o.castShadow = true;
+          }
+        });
+      modelRoot.add(loadedObject);
+      fitObjectToView(loadedObject);
+      setStatus(model.name + ' を表示中');
+    } else {
+      const loader = new GLTFLoader();
+      loader.register(p => new VRMLoaderPlugin(p));
+      const objectUrl = URL.createObjectURL(file);
+      objectUrls.push(objectUrl);
+      const gltf = await loader.loadAsync(objectUrl);
+      vrm = gltf.userData.vrm || null;
+      loadedObject = vrm ? vrm.scene : gltf.scene;
+      if (vrm) VRMUtils.rotateVRM0(vrm);
+      loadedObject.traverse(o => {
+        if (o.isMesh) {
+          o.frustumCulled = false;
+          o.castShadow = true;
+        }
+      });
+      modelRoot.add(loadedObject);
+      fitObjectToView(loadedObject);
+      setStatus(file.name + ' を表示中');
     }
-    modelFile=file;springMgr=vrm?.springBoneManager||null;applyPhysics();buildExpressions();
-    saveHist('model',file,hid);
-    if(motionFile)await loadMotion(motionFile,{reapply:1});   // 選択中のモーションを新しいモデルへ再適用
-  }catch(e){console.error(e);status('読み込み失敗：'+(e?.message||e));}
+    currentModelFile = file;
+    vrmSpringBoneManager = vrm?.springBoneManager || null;
+    applyVrmPhysics();
+    buildExpressionUI();
+    saveToHistory('model', file, historyId);
+    if (currentMotionFile) await loadMotion(currentMotionFile, {reapply: 1}); // 選択中のモーションを新しいモデルへ再適用
+  } catch (e) {
+    console.error(e);
+    setStatus('読み込み失敗：' + (e?.message || e));
+  }
 }
-const nz=t=>String(t).normalize('NFKC').replace(/\s+/g,'').toLowerCase();
-const PRESET_ALIAS={happy:['笑い','にこり','笑顔','happy','smile','joy','fun'],angry:['怒り','angry','mad'],sad:['悲しい','悲しみ','困る','sad','sorrow'],surprised:['驚き','びっくり','surprised','surprise'],relaxed:['なごみ','relaxed','ほっとする']};
-const presetMorph=k=>{for(const a of PRESET_ALIAS[k]||[]){const m=morphList.find(m=>nz(m.name)===nz(a));if(m)return m;}return null;};
-const setMorph=(m,v)=>{m.val=v;try{m.set(v);}catch{}};
-function collectMorphs(){   // VRM＝expressionManager、MMD/GLB＝メッシュのモーフターゲット（同一ファイル内）
-  morphList=[];
-  const em=vrm?.expressionManager;
-  if(em){for(const e of em.expressions||[]){const n=e.expressionName;if(n)morphList.push({name:n,val:0,set:v=>em.setValue(n,v)});}return;}
-  if(!activeObject)return;
-  const g=new Map();
-  activeObject.traverse(o=>{if(!o.isMesh||!o.morphTargetInfluences?.length)return;
-    const d=o.morphTargetDictionary;
-    if(d&&Object.keys(d).length)for(const [n,i] of Object.entries(d))(g.get(n)||g.set(n,[]).get(n)).push([o,i]);
-    else o.morphTargetInfluences.forEach((_,i)=>{const n=(o.name||'mesh')+'#'+i;(g.get(n)||g.set(n,[]).get(n)).push([o,i]);});});
-  for(const [n,a] of g)morphList.push({name:n,val:0,set:v=>{for(const [o,i] of a)o.morphTargetInfluences[i]=v;}});
+// ============================================================================
+// 4. 表情（モーフ）
+// ============================================================================
+/** 名前の比較用に正規化する（全角半角・空白・大文字小文字を無視）。 */
+const normalizeName = t => String(t).normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+const EXPRESSION_PRESET_ALIASES = {
+  happy: ['笑い', 'にこり', '笑顔', 'happy', 'smile', 'joy', 'fun'],
+  angry: ['怒り', 'angry', 'mad'],
+  sad: ['悲しい', '悲しみ', '困る', 'sad', 'sorrow'],
+  surprised: ['驚き', 'びっくり', 'surprised', 'surprise'],
+  relaxed: ['なごみ', 'relaxed', 'ほっとする']
+};
+/** 表情プリセット(happy等)に対応するモーフを、別名リストから探す。 */
+const findMorphForPreset = k => {
+  for (const a of EXPRESSION_PRESET_ALIASES[k] || []) {
+    const m = morphList.find(m => normalizeName(m.name) === normalizeName(a));
+    if (m) return m;
+  }
+  return null;
+};
+/** モーフの値を設定する（保持値 m.val も更新）。 */
+const applyMorphValue = (m, v) => {
+  m.val = v;
+  try {
+    m.set(v);
+  } catch {}
+};
+/** モーフ一覧を作る。VRM＝expressionManager、MMD/GLB＝メッシュのモーフターゲット。 */
+function collectMorphs() {
+  // VRM＝expressionManager、MMD/GLB＝メッシュのモーフターゲット（同一ファイル内）
+  morphList = [];
+  const expressionManager = vrm?.expressionManager;
+  if (expressionManager) {
+    for (const e of expressionManager.expressions || []) {
+      const n = e.expressionName;
+      if (n) morphList.push({name: n, val: 0, set: v => expressionManager.setValue(n, v)});
+    }
+    return;
+  }
+  if (!loadedObject) return;
+  const morphGroups = new Map();
+  loadedObject.traverse(mesh => {
+    if (!mesh.isMesh || !mesh.morphTargetInfluences?.length) return;
+    const dictionary = mesh.morphTargetDictionary;
+    if (dictionary && Object.keys(dictionary).length)
+      for (const [n, i] of Object.entries(dictionary))
+        (morphGroups.get(n) || morphGroups.set(n, []).get(n)).push([mesh, i]);
+    else
+      mesh.morphTargetInfluences.forEach((_, i) => {
+        const n = (mesh.name || 'mesh') + '#' + i;
+        (morphGroups.get(n) || morphGroups.set(n, []).get(n)).push([mesh, i]);
+      });
+  });
+  for (const [n, targets] of morphGroups)
+    morphList.push({
+      name: n,
+      val: 0,
+      set: v => {
+        for (const [mesh, i] of targets) mesh.morphTargetInfluences[i] = v;
+      }
+    });
 }
-function buildExpressions(){
-  collectMorphs();const vr=!!vrm?.expressionManager;
-  $('expr').querySelectorAll('button').forEach(b=>{const k=b.dataset.exp;b.disabled=vr?false:(k==='neutral'?!morphList.length:!presetMorph(k));});
-  $('morphSum').textContent='表情・モーフ（'+morphList.length+'）';morphRender();
+/** モーフ一覧と表情ボタンの有効/無効を更新する。 */
+function buildExpressionUI() {
+  collectMorphs();
+  const hasVrmExpressions = !!vrm?.expressionManager;
+  byId('expr')
+    .querySelectorAll('button')
+    .forEach(button => {
+      const presetKey = button.dataset.exp;
+      button.disabled = hasVrmExpressions
+        ? false
+        : presetKey === 'neutral'
+          ? !morphList.length
+          : !findMorphForPreset(presetKey);
+    });
+  byId('morphSum').textContent = '表情・モーフ（' + morphList.length + '）';
+  renderMorphList();
 }
-function setExpression(name){
-  currentExp=name;const em=vrm?.expressionManager;
-  if(em){for(const n of['happy','angry','sad','relaxed','surprised','neutral'])try{em.setValue(n,0);}catch{}
-    if(name!=='neutral')try{em.setValue(name,1);}catch{}return;}
-  if(!morphList.length)return;
-  for(const k in PRESET_ALIAS){const m=presetMorph(k);if(m&&m.val)setMorph(m,0);}
-  if(name!=='neutral'){const m=presetMorph(name);if(m)setMorph(m,1);}
-  morphSync();
+/** 表情を切り替える（neutral / happy / angry / sad / relaxed / surprised）。 */
+function setExpression(name) {
+  currentExpressionName = name;
+  const expressionManager = vrm?.expressionManager;
+  if (expressionManager) {
+    for (const presetName of ['happy', 'angry', 'sad', 'relaxed', 'surprised', 'neutral'])
+      try {
+        expressionManager.setValue(presetName, 0);
+      } catch {}
+    if (name !== 'neutral')
+      try {
+        expressionManager.setValue(name, 1);
+      } catch {}
+    return;
+  }
+  if (!morphList.length) return;
+  for (const k in EXPRESSION_PRESET_ALIASES) {
+    const morph = findMorphForPreset(k);
+    if (morph && morph.val) applyMorphValue(morph, 0);
+  }
+  if (name !== 'neutral') {
+    const morph = findMorphForPreset(name);
+    if (morph) applyMorphValue(morph, 1);
+  }
+  syncMorphSliders();
 }
-function morphRender(){
-  const box=$('morphList');if(!$('morphBox').open){box.replaceChildren();return;}
-  const q=nz($('morphQ').value||''),MAX=80,rows=[];
-  morphList.forEach((m,i)=>{if(!q||nz(m.name).includes(q))rows.push([m,i]);});
-  const els=rows.slice(0,MAX).map(([m,i])=>{
-    const d=document.createElement('div');d.className='mrow';d.dataset.i=i;
-    const n=document.createElement('span');n.className='mn';n.textContent=m.name;n.title=m.name;
-    const r=document.createElement('input');r.type='range';r.min=0;r.max=1;r.step=.01;r.value=m.val||0;
-    const v=document.createElement('span');v.className='mv';v.textContent=(m.val||0).toFixed(2);
-    d.append(n,r,v);return d;});
-  if(rows.length>MAX){const t=document.createElement('div');t.className='muted';t.textContent='他'+(rows.length-MAX)+'件：名前で絞り込んでください';els.push(t);}
-  box.replaceChildren(...els);
+/** モーフのスライダー一覧を描画する（検索で絞り込み、最大80件）。 */
+function renderMorphList() {
+  const listEl = byId('morphList');
+  if (!byId('morphBox').open) {
+    listEl.replaceChildren();
+    return;
+  }
+  const query = normalizeName(byId('morphQ').value || ''),
+    MAX_ROWS = 80,
+    rows = [];
+  morphList.forEach((m, i) => {
+    if (!query || normalizeName(m.name).includes(query)) rows.push([m, i]);
+  });
+  const rowEls = rows.slice(0, MAX_ROWS).map(([m, i]) => {
+    const row = document.createElement('div');
+    row.className = 'mrow';
+    row.dataset.i = i;
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'mn';
+    nameSpan.textContent = m.name;
+    nameSpan.title = m.name;
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = 0;
+    slider.max = 1;
+    slider.step = 0.01;
+    slider.value = m.val || 0;
+    const valueSpan = document.createElement('span');
+    valueSpan.className = 'mv';
+    valueSpan.textContent = (m.val || 0).toFixed(2);
+    row.append(nameSpan, slider, valueSpan);
+    return row;
+  });
+  if (rows.length > MAX_ROWS) {
+    const notice = document.createElement('div');
+    notice.className = 'muted';
+    notice.textContent = '他' + (rows.length - MAX_ROWS) + '件：名前で絞り込んでください';
+    rowEls.push(notice);
+  }
+  listEl.replaceChildren(...rowEls);
 }
-function morphSync(){$('morphList').querySelectorAll('.mrow').forEach(d=>{const m=morphList[+d.dataset.i];if(!m)return;d.querySelector('input').value=m.val||0;d.querySelector('.mv').textContent=(m.val||0).toFixed(2);});}
-$('morphBox').addEventListener('toggle',morphRender);
-$('morphQ').addEventListener('input',morphRender);
-$('morphList').addEventListener('input',e=>{const d=e.target.closest('.mrow');if(!d)return;const m=morphList[+d.dataset.i];if(!m)return;const v=+e.target.value;setMorph(m,v);d.querySelector('.mv').textContent=v.toFixed(2);});
-$('morphReset').onclick=()=>{for(const m of morphList)if(m.val)setMorph(m,0);morphSync();status('表情・モーフを全て0に戻しました');};
-$('expr').addEventListener('click',e=>{const b=e.target.closest('button[data-exp]');if(!b)return;setExpression(b.dataset.exp);status('表情：'+b.textContent);});
-$('modelFile').addEventListener('change',e=>{loadFile(e.target.files?.[0]);e.target.value='';});
+/** モーフの現在値をスライダー表示へ反映する。 */
+function syncMorphSliders() {
+  byId('morphList')
+    .querySelectorAll('.mrow')
+    .forEach(d => {
+      const m = morphList[+d.dataset.i];
+      if (!m) return;
+      d.querySelector('input').value = m.val || 0;
+      d.querySelector('.mv').textContent = (m.val || 0).toFixed(2);
+    });
+}
+byId('morphBox').addEventListener('toggle', renderMorphList);
+byId('morphQ').addEventListener('input', renderMorphList);
+byId('morphList').addEventListener('input', e => {
+  const d = e.target.closest('.mrow');
+  if (!d) return;
+  const m = morphList[+d.dataset.i];
+  if (!m) return;
+  const v = +e.target.value;
+  applyMorphValue(m, v);
+  d.querySelector('.mv').textContent = v.toFixed(2);
+});
+byId('morphReset').onclick = () => {
+  for (const m of morphList) if (m.val) applyMorphValue(m, 0);
+  syncMorphSliders();
+  setStatus('表情・モーフを全て0に戻しました');
+};
+byId('expr').addEventListener('click', e => {
+  const b = e.target.closest('button[data-exp]');
+  if (!b) return;
+  setExpression(b.dataset.exp);
+  setStatus('表情：' + b.textContent);
+});
+byId('modelFile').addEventListener('change', e => {
+  loadModelFile(e.target.files?.[0]);
+  e.target.value = '';
+});
 
 // ---- 履歴（IndexedDB）：ファイル本体を保存し、再読み込みなしで選べる。種別ごと最大10件、容量不足時は古い順に削除 ----
-const HIST_MAX=10,fmt=n=>n>=1048576?(n/1048576).toFixed(1)+'MB':Math.max(1,Math.round(n/1024))+'KB';
-let dbp=null,hnote='';
-const idb=r=>new Promise((ok,ng)=>{r.onsuccess=()=>ok(r.result);r.onerror=()=>ng(r.error);});
-const txd=t=>new Promise((ok,ng)=>{t.oncomplete=ok;t.onerror=t.onabort=()=>ng(t.error||new Error('abort'));});
-function hdb(){return dbp||(dbp=new Promise((ok,ng)=>{
-  if(!window.indexedDB)return ng(new Error('IndexedDB非対応'));
-  const r=indexedDB.open('model-viewer-history',2);
-  r.onupgradeneeded=()=>{const d=r.result;   // v2：リスト用のストアを追加（既存の履歴はそのまま）
-    if(!d.objectStoreNames.contains('meta'))d.createObjectStore('meta',{keyPath:'id',autoIncrement:true});
-    if(!d.objectStoreNames.contains('blobs'))d.createObjectStore('blobs');
-    if(!d.objectStoreNames.contains('lists'))d.createObjectStore('lists',{keyPath:'id',autoIncrement:true});
-    if(!d.objectStoreNames.contains('lblobs'))d.createObjectStore('lblobs');};
-  r.onsuccess=()=>ok(r.result);r.onerror=()=>ng(r.error);
-}).catch(e=>{dbp=null;throw e;}));}
-const hAll=async()=>idb((await hdb()).transaction('meta').objectStore('meta').getAll());
-async function hDel(id){const t=(await hdb()).transaction(['meta','blobs'],'readwrite');t.objectStore('meta').delete(id);t.objectStore('blobs').delete(id);await txd(t);}
-async function hTouch(id){const t=(await hdb()).transaction('meta','readwrite'),s=t.objectStore('meta'),m=await idb(s.get(id));if(m){m.time=Date.now();s.put(m);}await txd(t);return id;}
-async function hGet(id){const t=(await hdb()).transaction(['meta','blobs']),[m,b]=await Promise.all([idb(t.objectStore('meta').get(id)),idb(t.objectStore('blobs').get(id))]);
-  if(!m||!b)throw new Error('履歴データが見つかりません');return new File([b],m.name);}
-async function hSave(kind,file){
-  const all=await hAll(),dup=all.find(m=>m.kind===kind&&m.name===file.name&&m.size===file.size);
-  if(dup)return hTouch(dup.id);
-  try{navigator.storage?.persist?.();}catch{}
-  const est=await (navigator.storage?.estimate?.()||Promise.resolve(null)).catch(()=>null);
-  if(est?.quota&&file.size>est.quota-est.usage+all.reduce((a,m)=>a+m.size,0))throw new Error('too big');
-  for(let i=0;i<10;i++){
-    try{
-      const t=(await hdb()).transaction(['meta','blobs'],'readwrite');
-      const id=await idb(t.objectStore('meta').add({kind,name:file.name,size:file.size,time:Date.now()}));
-      t.objectStore('blobs').put(file,id);await txd(t);
-      const mine=(await hAll()).filter(m=>m.kind===kind).sort((a,b)=>b.time-a.time);
-      for(const m of mine.slice(HIST_MAX))await hDel(m.id);
+// ============================================================================
+// 5. 履歴（IndexedDB）
+// ============================================================================
+const HISTORY_MAX_PER_KIND = 10,
+  formatBytes = n =>
+    n >= 1048576 ? (n / 1048576).toFixed(1) + 'MB' : Math.max(1, Math.round(n / 1024)) + 'KB';
+let dbPromise = null,
+  historyNote = '';
+/** IndexedDBのRequestをPromiseとして待つ。 */
+const awaitRequest = r =>
+  new Promise((ok, ng) => {
+    r.onsuccess = () => ok(r.result);
+    r.onerror = () => ng(r.error);
+  });
+/** IndexedDBのトランザクション完了をPromiseとして待つ。 */
+const awaitTransaction = t =>
+  new Promise((ok, ng) => {
+    t.oncomplete = ok;
+    t.onerror = t.onabort = () => ng(t.error || new Error('abort'));
+  });
+/** 履歴・リスト用のIndexedDB(model-viewer-history)を開く。ストア：meta / blobs（履歴）、lists / lblobs（リスト）。 */
+function openDb() {
+  return (
+    dbPromise ||
+    (dbPromise = new Promise((ok, ng) => {
+      if (!window.indexedDB) return ng(new Error('IndexedDB非対応'));
+      const r = indexedDB.open('model-viewer-history', 2);
+      r.onupgradeneeded = () => {
+        const d = r.result; // v2：リスト用のストアを追加（既存の履歴はそのまま）
+        if (!d.objectStoreNames.contains('meta'))
+          d.createObjectStore('meta', {keyPath: 'id', autoIncrement: true});
+        if (!d.objectStoreNames.contains('blobs')) d.createObjectStore('blobs');
+        if (!d.objectStoreNames.contains('lists'))
+          d.createObjectStore('lists', {keyPath: 'id', autoIncrement: true});
+        if (!d.objectStoreNames.contains('lblobs')) d.createObjectStore('lblobs');
+      };
+      r.onsuccess = () => ok(r.result);
+      r.onerror = () => ng(r.error);
+    }).catch(e => {
+      dbPromise = null;
+      throw e;
+    }))
+  );
+}
+/** 履歴のメタ情報を全件取得する。 */
+const historyGetAll = async () =>
+  awaitRequest((await openDb()).transaction('meta').objectStore('meta').getAll());
+/** 履歴を1件削除する（メタ情報と本体）。 */
+async function historyDelete(id) {
+  const t = (await openDb()).transaction(['meta', 'blobs'], 'readwrite');
+  t.objectStore('meta').delete(id);
+  t.objectStore('blobs').delete(id);
+  await awaitTransaction(t);
+}
+/** 履歴の最終使用時刻を更新する（並び順用）。 */
+async function historyTouch(id) {
+  const t = (await openDb()).transaction('meta', 'readwrite'),
+    s = t.objectStore('meta'),
+    m = await awaitRequest(s.get(id));
+  if (m) {
+    m.time = Date.now();
+    s.put(m);
+  }
+  await awaitTransaction(t);
+  return id;
+}
+/** 履歴から本体を取り出して File として返す。 */
+async function historyGetFile(id) {
+  const t = (await openDb()).transaction(['meta', 'blobs']),
+    [m, b] = await Promise.all([
+      awaitRequest(t.objectStore('meta').get(id)),
+      awaitRequest(t.objectStore('blobs').get(id))
+    ]);
+  if (!m || !b) throw new Error('履歴データが見つかりません');
+  return new File([b], m.name);
+}
+/** 履歴へ保存する。同名・同サイズは更新のみ。種別ごと最大10件、容量不足時は古い順に削除して再試行する。 */
+async function historySave(kind, file) {
+  const allEntries = await historyGetAll(),
+    duplicate = allEntries.find(m => m.kind === kind && m.name === file.name && m.size === file.size);
+  if (duplicate) return historyTouch(duplicate.id);
+  try {
+    navigator.storage?.persist?.();
+  } catch {}
+  const estimate = await (navigator.storage?.estimate?.() || Promise.resolve(null)).catch(() => null);
+  if (
+    estimate?.quota &&
+    file.size > estimate.quota - estimate.usage + allEntries.reduce((a, m) => a + m.size, 0)
+  )
+    throw new Error('too big');
+  for (let i = 0; i < 10; i++) {
+    try {
+      const tx = (await openDb()).transaction(['meta', 'blobs'], 'readwrite');
+      const id = await awaitRequest(
+        tx.objectStore('meta').add({kind, name: file.name, size: file.size, time: Date.now()})
+      );
+      tx.objectStore('blobs').put(file, id);
+      await awaitTransaction(tx);
+      const ownKind = (await historyGetAll()).filter(m => m.kind === kind).sort((a, b) => b.time - a.time);
+      for (const m of ownKind.slice(HISTORY_MAX_PER_KIND)) await historyDelete(m.id);
       return id;
-    }catch(e){const old=(await hAll()).sort((a,b)=>a.time-b.time)[0];if(!old)throw e;await hDel(old.id);}   // 容量不足など：最古を消して再試行
+    } catch (e) {
+      const oldest = (await historyGetAll()).sort((a, b) => a.time - b.time)[0];
+      if (!oldest) throw e;
+      await historyDelete(oldest.id);
+    } // 容量不足など：最古を消して再試行
   }
   throw new Error('quota');
 }
-function saveHist(kind,file,hid){
-  (hid!=null?hTouch(hid):hSave(kind,file)).then(id=>{curIds[kind]=id;hnote='';histRender();})
-    .catch(e=>{console.warn('履歴保存',e);hnote='履歴に保存できませんでした（容量不足など）。表示・再生は通常どおり使えます。';histRender();});
+/** 読み込んだファイルを履歴へ保存（または既存履歴の更新）し、一覧を再描画する。 */
+function saveToHistory(kind, file, hid) {
+  (hid != null ? historyTouch(hid) : historySave(kind, file))
+    .then(id => {
+      currentHistoryIds[kind] = id;
+      historyNote = '';
+      renderHistory();
+    })
+    .catch(e => {
+      console.warn('履歴保存', e);
+      historyNote = '履歴に保存できませんでした（容量不足など）。表示・再生は通常どおり使えます。';
+      renderHistory();
+    });
 }
-async function histRender(){
-  let all;
-  try{all=await hAll();}catch(e){$('histSum').textContent='履歴（利用できません）';$('hinfo').textContent='この環境では履歴を保存できません：'+(e?.message||e);return;}
-  const cnt={};
-  for(const [kind,el] of [['model',$('hModel')],['motion',$('hMotion')]]){
-    const items=all.filter(m=>m.kind===kind).sort((a,b)=>b.time-a.time);cnt[kind]=items.length;
-    el.replaceChildren(...(items.length?items:[null]).map(m=>{
-      const d=document.createElement('div');
-      if(!m){d.className='muted';d.textContent='まだありません';return d;}
-      d.className='hitem'+(curIds[kind]===m.id?' on':'');
-      const b=document.createElement('button');b.className='hsel';b.dataset.kind=kind;b.dataset.id=m.id;b.title=m.name;
-      const n=document.createElement('span');n.className='hn';n.textContent=m.name;
-      const z=document.createElement('span');z.className='hsz';z.textContent=fmt(m.size);b.append(n,z);
-      const x=document.createElement('button');x.className='hdel';x.dataset.del=m.id;x.title='履歴から削除';x.textContent='✕';
-      if(kind==='motion'){const a=document.createElement('button');a.className='hadd';a.dataset.add=m.id;a.title='リストに追加';a.textContent='＋';d.append(b,a,x);}
-      else d.append(b,x);
-      return d;}));
+/** 履歴一覧（モデル/モーション）と使用量表示を描画する。 */
+async function renderHistory() {
+  let entries;
+  try {
+    entries = await historyGetAll();
+  } catch (e) {
+    byId('histSum').textContent = '履歴（利用できません）';
+    byId('hinfo').textContent = 'この環境では履歴を保存できません：' + (e?.message || e);
+    return;
   }
-  $('histSum').textContent='履歴（モデル '+cnt.model+'・モーション '+cnt.motion+'）';
-  let u='';try{const e=await navigator.storage.estimate();u='使用量 '+fmt(e.usage)+' / 上限の目安 '+fmt(e.quota);}catch{}
-  $('hinfo').textContent=(hnote?hnote+' ':'')+u;
+  const counts = {};
+  for (const [kind, listEl] of [
+    ['model', byId('hModel')],
+    ['motion', byId('hMotion')]
+  ]) {
+    const items = entries
+      .filter(m => m.kind === kind)
+      .sort((addBtn, selectBtn) => selectBtn.time - addBtn.time);
+    counts[kind] = items.length;
+    listEl.replaceChildren(
+      ...(items.length ? items : [null]).map(m => {
+        const row = document.createElement('div');
+        if (!m) {
+          row.className = 'muted';
+          row.textContent = 'まだありません';
+          return row;
+        }
+        row.className = 'hitem' + (currentHistoryIds[kind] === m.id ? ' on' : '');
+        const selectBtn = document.createElement('button');
+        selectBtn.className = 'hsel';
+        selectBtn.dataset.kind = kind;
+        selectBtn.dataset.id = m.id;
+        selectBtn.title = m.name;
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'hn';
+        nameSpan.textContent = m.name;
+        const sizeSpan = document.createElement('span');
+        sizeSpan.className = 'hsz';
+        sizeSpan.textContent = formatBytes(m.size);
+        selectBtn.append(nameSpan, sizeSpan);
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'hdel';
+        deleteBtn.dataset.del = m.id;
+        deleteBtn.title = '履歴から削除';
+        deleteBtn.textContent = '✕';
+        if (kind === 'motion') {
+          const addBtn = document.createElement('button');
+          addBtn.className = 'hadd';
+          addBtn.dataset.add = m.id;
+          addBtn.title = 'リストに追加';
+          addBtn.textContent = '＋';
+          row.append(selectBtn, addBtn, deleteBtn);
+        } else row.append(selectBtn, deleteBtn);
+        return row;
+      })
+    );
+  }
+  byId('histSum').textContent = '履歴（モデル ' + counts.model + '・モーション ' + counts.motion + '）';
+  let usageText = '';
+  try {
+    const e = await navigator.storage.estimate();
+    usageText = '使用量 ' + formatBytes(e.usage) + ' / 上限の目安 ' + formatBytes(e.quota);
+  } catch {}
+  byId('hinfo').textContent = (historyNote ? historyNote + ' ' : '') + usageText;
 }
-$('hist').addEventListener('click',async e=>{
-  const del=e.target.closest('[data-del]'),sel=e.target.closest('.hsel'),add=e.target.closest('[data-add]');
-  try{
-    if(add)openAddMenu(add,+add.dataset.add);
-    else if(del){await hDel(+del.dataset.del);hnote='';histRender();}
-    else if(sel){const id=+sel.dataset.id,f=await hGet(id);if(sel.dataset.kind==='model')await loadFile(f,id);else await loadMotion(f,{hid:id,ck:'h'+id});}
-    else if(e.target.id==='hClear'&&confirm('履歴をすべて削除しますか？')){
-      const t=(await hdb()).transaction(['meta','blobs'],'readwrite');t.objectStore('meta').clear();t.objectStore('blobs').clear();await txd(t);
-      curIds.model=curIds.motion=null;hnote='';histRender();}
-  }catch(err){status('履歴の操作に失敗：'+(err?.message||err));}
+byId('hist').addEventListener('click', async e => {
+  const del = e.target.closest('[data-del]'),
+    sel = e.target.closest('.hsel'),
+    add = e.target.closest('[data-add]');
+  try {
+    if (add) openAddToListMenu(add, +add.dataset.add);
+    else if (del) {
+      await historyDelete(+del.dataset.del);
+      historyNote = '';
+      renderHistory();
+    } else if (sel) {
+      const id = +sel.dataset.id,
+        f = await historyGetFile(id);
+      if (sel.dataset.kind === 'model') await loadModelFile(f, id);
+      else await loadMotion(f, {hid: id, ck: 'h' + id});
+    } else if (e.target.id === 'hClear' && confirm('履歴をすべて削除しますか？')) {
+      const t = (await openDb()).transaction(['meta', 'blobs'], 'readwrite');
+      t.objectStore('meta').clear();
+      t.objectStore('blobs').clear();
+      await awaitTransaction(t);
+      currentHistoryIds.model = currentHistoryIds.motion = null;
+      historyNote = '';
+      renderHistory();
+    }
+  } catch (err) {
+    setStatus('履歴の操作に失敗：' + (err?.message || err));
+  }
 });
-try{$('hist').open=localStorage.getItem('mvHistOpen')==='1';}catch{}
-$('hist').addEventListener('toggle',()=>{try{localStorage.setItem('mvHistOpen',$('hist').open?'1':'0');}catch{}});
+try {
+  byId('hist').open = localStorage.getItem('mvHistOpen') === '1';
+} catch {}
+byId('hist').addEventListener('toggle', () => {
+  try {
+    localStorage.setItem('mvHistOpen', byId('hist').open ? '1' : '0');
+  } catch {}
+});
 
 // ---- ポップアップメニュー（＋ボタン・保存ボタン共通） ----
-function closePopup(){$('popup').hidden=true;}
-function popup(anchor,title,entries){
-  const m=$('popup');m.replaceChildren();
-  const h=document.createElement('div');h.className='muted';h.style.padding='2px 6px 4px';h.textContent=title;m.append(h);
-  for(const en of entries){const b=document.createElement('button');b.textContent=en.label;if(en.on)b.classList.add('primary');b.onclick=()=>{closePopup();en.fn();};m.append(b);}
-  m.hidden=false;const r=anchor.getBoundingClientRect(),w=m.offsetWidth,hh=m.offsetHeight;
-  m.style.left=Math.min(Math.max(8,r.left),Math.max(8,innerWidth-w-8))+'px';
-  let top=r.top-hh-6;if(top<8)top=Math.min(r.bottom+6,Math.max(8,innerHeight-hh-8));
-  m.style.top=top+'px';
+// ============================================================================
+// 6. ポップアップ・物理・ループ設定
+// ============================================================================
+/** ポップアップメニューを閉じる。 */
+function closePopup() {
+  byId('popup').hidden = true;
 }
-document.addEventListener('pointerdown',e=>{if(!$('popup').hidden&&!e.target.closest('#popup'))closePopup();},true);
-function download(blob,name){const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),30000);}
+/** ボタンの近くにポップアップメニューを表示する。entries：[{label, fn, on}]。 */
+function showPopup(anchor, title, entries) {
+  const menu = byId('popup');
+  menu.replaceChildren();
+  const titleEl = document.createElement('div');
+  titleEl.className = 'muted';
+  titleEl.style.padding = '2px 6px 4px';
+  titleEl.textContent = title;
+  menu.append(titleEl);
+  for (const entry of entries) {
+    const button = document.createElement('button');
+    button.textContent = entry.label;
+    if (entry.on) button.classList.add('primary');
+    button.onclick = () => {
+      closePopup();
+      entry.fn();
+    };
+    menu.append(button);
+  }
+  menu.hidden = false;
+  const anchorRect = anchor.getBoundingClientRect(),
+    menuWidth = menu.offsetWidth,
+    menuHeight = menu.offsetHeight;
+  menu.style.left = Math.min(Math.max(8, anchorRect.left), Math.max(8, innerWidth - menuWidth - 8)) + 'px';
+  let top = anchorRect.top - menuHeight - 6;
+  if (top < 8) top = Math.min(anchorRect.bottom + 6, Math.max(8, innerHeight - menuHeight - 8));
+  menu.style.top = top + 'px';
+}
+document.addEventListener(
+  'pointerdown',
+  e => {
+    if (!byId('popup').hidden && !e.target.closest('#popup')) closePopup();
+  },
+  true
+);
+/** Blob/File をダウンロードさせる。 */
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob),
+    link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
 
 // ---- ループ（チェックボタン） ----
-try{$('loop').checked=localStorage.getItem('mvLoop')!=='0';}catch{}
-$('loop').addEventListener('change',()=>{try{localStorage.setItem('mvLoop',$('loop').checked?'1':'0');}catch{}applyLoop(true);status('ループ：'+($('loop').checked?'ON':'OFF'));});
+try {
+  byId('loop').checked = localStorage.getItem('mvLoop') !== '0';
+} catch {}
+byId('loop').addEventListener('change', () => {
+  try {
+    localStorage.setItem('mvLoop', byId('loop').checked ? '1' : '0');
+  } catch {}
+  applyLoop(true);
+  setStatus('ループ：' + (byId('loop').checked ? 'ON' : 'OFF'));
+});
 
 // ---- 物理のオン/オフ。VRM＝揺れもの(SpringBone)、MMD＝剛体物理(Ammo.js)。OFFでは髪・服などが揺れず、モーションどおりの形になる ----
-function applyPhysics(){   // VRM：スプリングボーンの切替。MMDは切替時にモーションを再読み込みして物理を作り直す（下のchangeハンドラ）
-  const on=$('physics').checked;
-  if(vrm){vrm.springBoneManager=on?springMgr:null;try{springMgr?.reset?.();}catch{}}
+/** VRMの物理（スプリングボーン）のON/OFFを反映する。MMDは切替時にモーションを再読み込みして作り直す。 */
+function applyVrmPhysics() {
+  // VRM：スプリングボーンの切替。MMDは切替時にモーションを再読み込みして物理を作り直す（下のchangeハンドラ）
+  const on = byId('physics').checked;
+  if (vrm) {
+    vrm.springBoneManager = on ? vrmSpringBoneManager : null;
+    try {
+      vrmSpringBoneManager?.reset?.();
+    } catch {}
+  }
 }
 // MMDの物理(Bullet)＝Ammo.js。使うときだけ読み込む（three.js同梱のwasm版）
-let ammoP=null;
-function ensureAmmo(){
-  if(window.Ammo&&window.Ammo.btVector3)return Promise.resolve(true);
-  return ammoP||(ammoP=new Promise(ok=>{
-    const B='https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/libs/',sc=document.createElement('script');sc.src=B+'ammo.wasm.js';
-    sc.onload=()=>{try{window.Ammo({locateFile:f=>B+f}).then(lib=>{window.Ammo=lib;ok(true);},e=>{console.warn(e);ok(false);});}catch(e){console.warn(e);ok(false);}};
-    sc.onerror=()=>ok(false);document.head.append(sc);
-  }).then(r=>{if(!r)ammoP=null;return r;}));
+let ammoLoadPromise = null;
+/** MMD物理用の Ammo.js(wasm) を必要になった時だけ読み込む。成功したら true。 */
+function loadAmmoIfNeeded() {
+  if (window.Ammo && window.Ammo.btVector3) return Promise.resolve(true);
+  return (
+    ammoLoadPromise ||
+    (ammoLoadPromise = new Promise(ok => {
+      const AMMO_BASE_URL = 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/libs/',
+        scriptEl = document.createElement('script');
+      scriptEl.src = AMMO_BASE_URL + 'ammo.wasm.js';
+      scriptEl.onload = () => {
+        try {
+          window.Ammo({locateFile: f => AMMO_BASE_URL + f}).then(
+            lib => {
+              window.Ammo = lib;
+              ok(true);
+            },
+            e => {
+              console.warn(e);
+              ok(false);
+            }
+          );
+        } catch (e) {
+          console.warn(e);
+          ok(false);
+        }
+      };
+      scriptEl.onerror = () => ok(false);
+      document.head.append(scriptEl);
+    }).then(r => {
+      if (!r) ammoLoadPromise = null;
+      return r;
+    }))
+  );
 }
-try{$('physics').checked=localStorage.getItem('mvPhysics')!=='0';}catch{}
-$('physics').addEventListener('change',()=>{try{localStorage.setItem('mvPhysics',$('physics').checked?'1':'0');}catch{}applyPhysics();
-  if(motionFile&&(vrm||mmdMesh))loadMotion(motionFile,{reapply:1});   // 物理ON/OFFは最初から再生し直す（連打は最後の1回だけ有効）
-  status('物理：'+($('physics').checked?'ON':'OFF'));});
+try {
+  byId('physics').checked = localStorage.getItem('mvPhysics') !== '0';
+} catch {}
+byId('physics').addEventListener('change', () => {
+  try {
+    localStorage.setItem('mvPhysics', byId('physics').checked ? '1' : '0');
+  } catch {}
+  applyVrmPhysics();
+  if (currentMotionFile && (vrm || mmdMesh)) loadMotion(currentMotionFile, {reapply: 1}); // 物理ON/OFFは最初から再生し直す（連打は最後の1回だけ有効）
+  setStatus('物理：' + (byId('physics').checked ? 'ON' : 'OFF'));
+});
+
+// ---- 視線：ONにすると、視点を回してもモデルの顔と目が画面（カメラ）の方を向く ----
+// VRM＝目は three-vrm の vrm.lookAt、顔は頭ボーンを回す。MMD＝頭ボーンのみ（目のボーンは未対応）。
+// モデルの正面はワールドの+Z（視点を回してもモデルは動かさない）。向ける角度には上限がある
+const GAZE_HEAD_WEIGHT = 0.65; // 顔をカメラへ向ける割合（残りは目が補う）
+const GAZE_YAW_LIMIT = (50 * Math.PI) / 180; // 左右に向ける上限
+const GAZE_PITCH_LIMIT = (25 * Math.PI) / 180; // 上下に向ける上限
+const GAZE_FOLLOW_RATE = 8; // 追従の速さ（大きいほど素早く向く）
+const gazeSmooth = new WeakMap(); // 頭ノード→なめらか化した補正回転
+const gazeTmp = {
+  headPos: new THREE.Vector3(),
+  camPos: new THREE.Vector3(),
+  want: new THREE.Vector3(),
+  cur: new THREE.Vector3(),
+  restForward: new THREE.Vector3(),
+  rootQ: new THREE.Quaternion(),
+  headQ: new THREE.Quaternion(),
+  parentQ: new THREE.Quaternion(),
+  delta: new THREE.Quaternion(),
+  target: new THREE.Quaternion(),
+  local: new THREE.Quaternion()
+}; // 毎フレームの計算用（new を避ける）
+let gazeApplied = null; // 直前フレームで回した頭 {node, base}。次のフレームで元に戻す
+/** 視線ONか。 */
+const isGazeEnabled = () => byId('gaze').checked;
+/** 直前フレームで加えた頭の回転を元に戻す（モーションが頭を動かさない場合に、補正が積み重ならないように）。 */
+function releaseGaze() {
+  if (!gazeApplied) return;
+  gazeApplied.node.quaternion.copy(gazeApplied.base);
+  gazeApplied = null;
+}
+/** 頭ノードをカメラの方へ向ける。rootObject はモデルの基準（VRM＝vrm.scene、MMD＝メッシュ）。モーション適用後に呼ぶ。 */
+function turnHeadToCamera(headNode, rootObject, dt) {
+  const g = gazeTmp;
+  headNode.getWorldPosition(g.headPos);
+  camera.getWorldPosition(g.camPos);
+  g.want.subVectors(g.camPos, g.headPos).normalize(); // 頭からカメラへの方向（ワールド）
+  const yaw = clampNumber(Math.atan2(g.want.x, g.want.z), -GAZE_YAW_LIMIT, GAZE_YAW_LIMIT),
+    pitch = clampNumber(Math.asin(clampNumber(g.want.y, -1, 1)), -GAZE_PITCH_LIMIT, GAZE_PITCH_LIMIT);
+  g.want.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)); // 上限内に収めた向けたい方向
+  rootObject.getWorldQuaternion(g.rootQ);
+  g.restForward.set(0, 0, 1).applyQuaternion(g.rootQ.invert()); // モデル自身の座標での正面（VRM0は-Z）
+  headNode.getWorldQuaternion(g.headQ);
+  g.cur.copy(g.restForward).applyQuaternion(g.headQ); // 今の顔の向き（ワールド）
+  g.delta.setFromUnitVectors(g.cur, g.want);
+  g.target.identity().slerp(g.delta, GAZE_HEAD_WEIGHT);
+  let smooth = gazeSmooth.get(headNode);
+  if (!smooth) gazeSmooth.set(headNode, (smooth = new THREE.Quaternion()));
+  smooth.slerp(g.target, 1 - Math.exp(-dt * GAZE_FOLLOW_RATE));
+  headNode.parent.getWorldQuaternion(g.parentQ);
+  g.local.copy(g.parentQ).invert().multiply(smooth).multiply(g.parentQ); // ワールドの回転を親の座標系へ直す
+  gazeApplied = {node: headNode, base: headNode.quaternion.clone()};
+  headNode.quaternion.premultiply(g.local);
+}
+/** VRMの視線。ONなら目(lookAt)と顔をカメラへ向け、OFFなら目を正面へ戻す。vrm.update の前に呼ぶ。 */
+function applyGazeVrm(dt) {
+  const look = vrm.lookAt;
+  if (isGazeEnabled()) {
+    if (look && look.target !== camera) look.target = camera;
+    const head = vrm.humanoid?.getNormalizedBoneNode('head');
+    if (head) turnHeadToCamera(head, vrm.scene, dt);
+  } else if (look?.target === camera) {
+    look.target = null;
+    look.reset();
+  }
+}
+/** MMDの視線。ONなら頭ボーンをカメラへ向ける。mmdHelper.update の後に呼ぶ。 */
+function applyGazeMmd(dt) {
+  if (!isGazeEnabled()) return;
+  const head = mmdMesh?.skeleton?.getBoneByName('頭');
+  if (head) turnHeadToCamera(head, mmdMesh, dt);
+}
+try {
+  byId('gaze').checked = localStorage.getItem('mvGaze') === '1';
+} catch {}
+byId('gaze').addEventListener('change', () => {
+  try {
+    localStorage.setItem('mvGaze', byId('gaze').checked ? '1' : '0');
+  } catch {}
+  if (!isGazeEnabled()) releaseGaze();
+  setStatus('視線：' + (isGazeEnabled() ? 'ON' : 'OFF'));
+});
+// ---- 起動時に復帰：最後に使ったモデルを履歴から自動で開く（チェックでON/OFF。既定はON） ----
+try {
+  byId('restore').checked = localStorage.getItem('mvRestore') !== '0';
+} catch {}
+byId('restore').addEventListener('change', () => {
+  try {
+    localStorage.setItem('mvRestore', byId('restore').checked ? '1' : '0');
+  } catch {}
+  setStatus('起動時に復帰：' + (byId('restore').checked ? 'ON' : 'OFF'));
+});
 
 // ---- リスト：モーションの再生リスト（IndexedDBの'lists'/'lblobs'。履歴とは別に保存するので、履歴の10件入れ替えで消えない） ----
-const lAll=async()=>idb((await hdb()).transaction('lists').objectStore('lists').getAll());
-const curList=()=>lists.find(l=>l.id===curListId)||null;
-const saveSel=()=>{try{localStorage.setItem('mvListSel',curListId==null?'':String(curListId));}catch{}};
-async function lRefresh(){
-  try{lists=(await lAll()).sort((a,b)=>a.id-b.id);}catch(e){lists=[];console.warn('リスト',e);}
-  if(curListId!=null&&!lists.some(l=>l.id===curListId))curListId=null;
-  listRender();
+// ============================================================================
+// 7. 再生リスト
+// ============================================================================
+/** 保存済みの再生リストを全件取得する。 */
+const listsGetAll = async () =>
+  awaitRequest((await openDb()).transaction('lists').objectStore('lists').getAll());
+/** 選択中のリストを返す（無ければ null）。 */
+const getSelectedList = () => savedLists.find(l => l.id === selectedListId) || null;
+/** 選択中リストのIDを localStorage に保存する。 */
+const saveSelectedListId = () => {
+  try {
+    localStorage.setItem('mvListSel', selectedListId == null ? '' : String(selectedListId));
+  } catch {}
+};
+/** リストをIndexedDBから読み直して画面を更新する。 */
+async function refreshLists() {
+  try {
+    savedLists = (await listsGetAll()).sort((a, b) => a.id - b.id);
+  } catch (e) {
+    savedLists = [];
+    console.warn('リスト', e);
+  }
+  if (selectedListId != null && !savedLists.some(l => l.id === selectedListId)) selectedListId = null;
+  renderList();
 }
-async function lInit(){try{const s=localStorage.getItem('mvListSel');curListId=s?+s:null;}catch{}await lRefresh();}
-try{$('plist').open=localStorage.getItem('mvListOpen')!=='0';}catch{}
-$('plist').addEventListener('toggle',()=>{try{localStorage.setItem('mvListOpen',$('plist').open?'1':'0');}catch{}});
-const listTag=()=>{const L=playCtx&&lists.find(l=>l.id===playCtx.listId);if(!L)return '';const i=L.items.findIndex(x=>x.key===playCtx.key);const r=Math.max(1,L.items[i]?.rep|0||1);return '　['+L.name+' '+(i+1)+'/'+L.items.length+(r>1?'　×'+(playCtx.n||1)+'/'+r:'')+']';};
-function listRender(){
-  const sel=$('listSel'),L=curList();
-  sel.replaceChildren(new Option('新規リスト',''),...lists.map(l=>new Option(l.name+'（'+l.items.length+'）',String(l.id))));
-  sel.value=L?String(L.id):'';
-  $('listSum').textContent='リスト：'+(L?L.name+'（'+L.items.length+'件）':'新規リスト');
-  const box=$('listItems'),has=!!(L&&L.items.length);
-  $('listPlay').disabled=$('listNext').disabled=!has;$('listDel').disabled=!L;
-  const pl=!!(L&&playCtx&&playCtx.listId===L.id&&player.action&&!player.done&&!player.frozen);
-  $('listPlay').textContent=pl?'■':'▶';$('listPlay').title=pl?'停止（その場のポーズで止める）':'最初から再生';
-  if(!has){const d=document.createElement('div');d.className='muted';d.textContent=L?'このリストは空です':'履歴のモーション右の＋ボタンで追加できます（最初に入れたモーション名がリスト名になります）';box.replaceChildren(d);return;}
-  box.replaceChildren(...L.items.map((it,i)=>{
-    const d=document.createElement('div');d.className='litem'+(playCtx&&playCtx.listId===L.id&&playCtx.key===it.key?' on':'');d.dataset.key=it.key;
-    const g=document.createElement('span');g.className='grip';g.textContent='☰';g.title='ドラッグで並べ替え';
-    const b=document.createElement('button');b.className='lsel';b.dataset.play=it.key;b.title=it.name;
-    const n=document.createElement('span');n.className='hn';n.style.display='block';n.textContent=(i+1)+'. '+it.name;b.append(n);
-    const x=document.createElement('button');x.className='hdel';x.dataset.lrm=it.key;x.title='リストから外す';x.textContent='✕';
-    const w=document.createElement('button');w.className='lrepb';w.dataset.rep=it.key;w.title='タップで繰り返し回数を増やす（長押しで1に戻す）';w.textContent='×'+Math.max(1,it.rep|0||1);
-    d.append(g,b,w,x);return d;}));
+/** 起動時に前回選択したリストを復元する。 */
+async function initLists() {
+  try {
+    const s = localStorage.getItem('mvListSel');
+    selectedListId = s ? +s : null;
+  } catch {}
+  await refreshLists();
 }
-function openAddMenu(btn,hid){
-  const ent=[{label:'＋ 新規リスト（このモーション名で作成）',on:curListId==null,fn:()=>addToList(null,hid)}];
-  for(const L of lists)ent.push({label:L.name+'（'+L.items.length+'）',on:L.id===curListId,fn:()=>addToList(L.id,hid)});
-  popup(btn,'追加先のリストを選択',ent);
+try {
+  byId('plist').open = localStorage.getItem('mvListOpen') !== '0';
+} catch {}
+byId('plist').addEventListener('toggle', () => {
+  try {
+    localStorage.setItem('mvListOpen', byId('plist').open ? '1' : '0');
+  } catch {}
+});
+/** ステータス表示用の「リスト名 n/全体 ×回数」文字列を返す。 */
+const listProgressLabel = () => {
+  const L = listPlayback && savedLists.find(l => l.id === listPlayback.listId);
+  if (!L) return '';
+  const i = L.items.findIndex(x => x.key === listPlayback.key);
+  const r = Math.max(1, L.items[i]?.rep | 0 || 1);
+  return (
+    '　[' +
+    L.name +
+    ' ' +
+    (i + 1) +
+    '/' +
+    L.items.length +
+    (r > 1 ? '　×' + (listPlayback.n || 1) + '/' + r : '') +
+    ']'
+  );
+};
+/** リストUI（選択・再生ボタン・項目・繰り返し回数）を描画する。 */
+function renderList() {
+  const selectEl = byId('listSel'),
+    list = getSelectedList();
+  selectEl.replaceChildren(
+    new Option('新規リスト', ''),
+    ...savedLists.map(l => new Option(l.name + '（' + l.items.length + '）', String(l.id)))
+  );
+  selectEl.value = list ? String(list.id) : '';
+  byId('listSum').textContent =
+    'リスト：' + (list ? list.name + '（' + list.items.length + '件）' : '新規リスト');
+  const itemsEl = byId('listItems'),
+    hasItems = !!(list && list.items.length);
+  byId('listPlay').disabled = byId('listNext').disabled = !hasItems;
+  byId('listDel').disabled = !list;
+  const isPlayingThisList = !!(
+    list &&
+    listPlayback &&
+    listPlayback.listId === list.id &&
+    playback.action &&
+    !playback.done &&
+    !playback.frozen
+  );
+  byId('listPlay').textContent = isPlayingThisList ? '■' : '▶';
+  byId('listPlay').title = isPlayingThisList ? '停止（その場のポーズで止める）' : '最初から再生';
+  if (!hasItems) {
+    const row = document.createElement('div');
+    row.className = 'muted';
+    row.textContent = list
+      ? 'このリストは空です'
+      : '履歴のモーション右の＋ボタンで追加できます（最初に入れたモーション名がリスト名になります）';
+    itemsEl.replaceChildren(row);
+    return;
+  }
+  itemsEl.replaceChildren(
+    ...list.items.map((item, i) => {
+      const row = document.createElement('div');
+      row.className =
+        'litem' +
+        (listPlayback && listPlayback.listId === list.id && listPlayback.key === item.key ? ' on' : '');
+      row.dataset.key = item.key;
+      const grip = document.createElement('span');
+      grip.className = 'grip';
+      grip.textContent = '☰';
+      grip.title = 'ドラッグで並べ替え';
+      const playBtn = document.createElement('button');
+      playBtn.className = 'lsel';
+      playBtn.dataset.play = item.key;
+      playBtn.title = item.name;
+      const label = document.createElement('span');
+      label.className = 'hn';
+      label.style.display = 'block';
+      label.textContent = i + 1 + '. ' + item.name;
+      playBtn.append(label);
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'hdel';
+      removeBtn.dataset.lrm = item.key;
+      removeBtn.title = 'リストから外す';
+      removeBtn.textContent = '✕';
+      const repeatBtn = document.createElement('button');
+      repeatBtn.className = 'lrepb';
+      repeatBtn.dataset.rep = item.key;
+      repeatBtn.title = 'タップで繰り返し回数を増やす（長押しで1に戻す）';
+      repeatBtn.textContent = '×' + Math.max(1, item.rep | 0 || 1);
+      row.append(grip, playBtn, repeatBtn, removeBtn);
+      return row;
+    })
+  );
 }
-async function addToList(lid,hid){
-  try{
-    const file=await hGet(hid),key='k'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
-    await lRefresh();
-    let L=lid==null?null:lists.find(l=>l.id===lid);
-    if(lid!=null&&!L)throw new Error('リストが見つかりません');
-    if(!L){const base=file.name.replace(/\.[^.]+$/,''),names=new Set(lists.map(l=>l.name));let nm=base,n=2;while(names.has(nm))nm=base+' ('+(n++)+')';L={name:nm,items:[]};}   // 新規リストは最初のモーション名
-    L.items.push({key,name:file.name,size:file.size,rep:1});
-    const t=(await hdb()).transaction(['lists','lblobs'],'readwrite');
-    t.objectStore('lblobs').put(file,key);
-    const id=await idb(t.objectStore('lists').put(L));await txd(t);
-    curListId=id;saveSel();await lRefresh();status('リスト「'+L.name+'」に追加しました（'+L.items.length+'件）');
-  }catch(e){console.warn(e);status('リストへの追加に失敗：'+(e?.message||e));}
+/** 履歴のモーションをリストへ追加するための追加先メニューを開く。 */
+function openAddToListMenu(btn, hid) {
+  const ent = [
+    {
+      label: '＋ 新規リスト（このモーション名で作成）',
+      on: selectedListId == null,
+      fn: () => addToList(null, hid)
+    }
+  ];
+  for (const L of savedLists)
+    ent.push({
+      label: L.name + '（' + L.items.length + '）',
+      on: L.id === selectedListId,
+      fn: () => addToList(L.id, hid)
+    });
+  showPopup(btn, '追加先のリストを選択', ent);
 }
-async function removeFromList(L,key){
-  try{
-    L.items=L.items.filter(i=>i.key!==key);
-    const t=(await hdb()).transaction(['lists','lblobs'],'readwrite');t.objectStore('lblobs').delete(key);t.objectStore('lists').put(L);await txd(t);
-    if(playCtx&&playCtx.key===key)playCtx=null;await lRefresh();
-  }catch(e){status('リストの更新に失敗：'+(e?.message||e));}
+/** 履歴のモーションをリストへ追加する。listId が null なら、そのモーション名で新規リストを作る。 */
+async function addToList(listId, historyId) {
+  try {
+    const file = await historyGetFile(historyId),
+      key = 'k' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    await refreshLists();
+    let list = listId == null ? null : savedLists.find(l => l.id === listId);
+    if (listId != null && !list) throw new Error('リストが見つかりません');
+    if (!list) {
+      const base = file.name.replace(/\.[^.]+$/, ''),
+        names = new Set(savedLists.map(l => l.name));
+      let name = base,
+        suffix = 2;
+      while (names.has(name)) name = base + ' (' + suffix++ + ')';
+      list = {name: name, items: []};
+    } // 新規リストは最初のモーション名
+    list.items.push({key, name: file.name, size: file.size, rep: 1});
+    const tx = (await openDb()).transaction(['lists', 'lblobs'], 'readwrite');
+    tx.objectStore('lblobs').put(file, key);
+    const id = await awaitRequest(tx.objectStore('lists').put(list));
+    await awaitTransaction(tx);
+    selectedListId = id;
+    saveSelectedListId();
+    await refreshLists();
+    setStatus('リスト「' + list.name + '」に追加しました（' + list.items.length + '件）');
+  } catch (e) {
+    console.warn(e);
+    setStatus('リストへの追加に失敗：' + (e?.message || e));
+  }
+}
+/** リストからモーションを1件外す。 */
+async function removeFromList(list, key) {
+  try {
+    list.items = list.items.filter(i => i.key !== key);
+    const tx = (await openDb()).transaction(['lists', 'lblobs'], 'readwrite');
+    tx.objectStore('lblobs').delete(key);
+    tx.objectStore('lists').put(list);
+    await awaitTransaction(tx);
+    if (listPlayback && listPlayback.key === key) listPlayback = null;
+    await refreshLists();
+  } catch (e) {
+    setStatus('リストの更新に失敗：' + (e?.message || e));
+  }
 }
 // ---- クリップのキャッシュ：ループ・リストの再生で、切り替えのたびに読み込み・変換をやり直さないため ----
 // モデルごと（モデルを開き直すと自動で空）。接地補正のスライダー値が変わったら別物として扱う。
-const clipCache=new WeakMap();let motionCK=null;
-const cacheOf=()=>{const m=mmdMesh||vrm;if(!m)return null;let c=clipCache.get(m);if(!c){c=new Map();clipCache.set(m,c);}return c;};
-const clipSig=()=>['mgr','msole','mhip'].map(id=>gv(id,0)).join(',');
-function cachePut(cm,key,e){if(!cm)return;if(cm.size>=24)cm.delete(cm.keys().next().value);cm.set(key,e);}
-const listFiles=new Map();   // リストのモーション：IndexedDBから読み出したFile（切り替えのたびに読み直さない）
-async function listFile(it){let f=listFiles.get(it.key);if(!f){const b=await idb((await hdb()).transaction('lblobs').objectStore('lblobs').get(it.key));if(!b)throw new Error('保存データが見つかりません');f=new File([b],it.name);listFiles.set(it.key,f);}return f;}
+// ============================================================================
+// 8. クリップのキャッシュとリスト再生
+// ============================================================================
+const clipCacheByModel = new WeakMap();
+let motionCacheKey = null;
+/** 現在のモデル用のクリップキャッシュを返す（モデルごと・最大24件）。 */
+const getClipCache = () => {
+  const model = mmdMesh || vrm;
+  if (!model) return null;
+  let cache = clipCacheByModel.get(model);
+  if (!cache) {
+    cache = new Map();
+    clipCacheByModel.set(model, cache);
+  }
+  return cache;
+};
+/** 接地補正スライダー値の組。値が変わったら別のクリップとして扱うためのキー。 */
+const clipSignature = () => ['mgr', 'msole', 'mhip'].map(id => gv(id, 0)).join(',');
+/** クリップをキャッシュへ入れる（満杯なら最古を削除）。 */
+function putClipCache(cacheMap, key, entry) {
+  if (!cacheMap) return;
+  if (cacheMap.size >= 24) cacheMap.delete(cacheMap.keys().next().value);
+  cacheMap.set(key, entry);
+}
+const listFileCache = new Map(); // リストのモーション：IndexedDBから読み出したFile（切り替えのたびに読み直さない）
+/** リスト項目の File をIndexedDBから読み出す（メモリに保持して再利用）。 */
+async function loadListItemFile(item) {
+  let file = listFileCache.get(item.key);
+  if (!file) {
+    const blob = await awaitRequest(
+      (await openDb()).transaction('lblobs').objectStore('lblobs').get(item.key)
+    );
+    if (!blob) throw new Error('保存データが見つかりません');
+    file = new File([blob], item.name);
+    listFileCache.set(item.key, file);
+  }
+  return file;
+}
 // リスト再生の開始時に、全モーションの読み込み・変換を先に済ませる（最初に少し待つ代わりに、切り替えでは止まらない）
-async function prepareList(L){
-  const cm=cacheOf();if(!cm)return true;
-  const sig=clipSig(),todo=L.items.filter(it=>!cm.has('L'+it.key+'|'+sig));if(!todo.length)return true;
-  const tok=++motionTok;stopMotion();   // 変換は初期ポーズで行うので、再生を止めてから
-  let n=0;
-  for(const it of todo){
-    status('リストを準備中… '+(++n)+'/'+todo.length+'（'+it.name+'）');
-    await new Promise(r=>setTimeout(r,0));   // 画面を更新する間を空ける
-    if(tok!==motionTok||(!vrm&&!mmdMesh))return false;   // 準備中に別の操作があった
-    try{
-      const f=await listFile(it),isV=/\.vmd$/i.test(f.name);let anim=null,vmd=null,mi=null;
-      if(isV){const Ld=new MMDLoader(),url=URL.createObjectURL(f);urls.push(url);vmd=await new Promise((ok,ng)=>Ld.loadVMD(url,ok,undefined,ng));}
-      else{const l=new GLTFLoader();l.register(p=>new VRMAnimationLoaderPlugin(p));anim=(await l.parseAsync(fixVrmaSpec(await f.arrayBuffer()),'')).userData.vrmAnimations?.[0];if(!anim)throw new Error('VRMAのアニメーションが見つかりません');}
-      if(tok!==motionTok||(!vrm&&!mmdMesh))return false;
-      groundFixLast='';let clip;
-      if(mmdMesh){mmdMesh.pose();if(isV)mi=fixMorphNames(vmd,mmdMesh);const c0=isV?new MMDLoader().animationBuilder.build(vmd,mmdMesh):vrmaToMMD(anim,mmdMesh);clip=isV?groundFixMMDClip(c0,mmdMesh):c0;}
-      else{vrm.humanoid.resetNormalizedPose();const c0=isV?vmdToVRM(vmd,vrm):createVRMAnimationClip(anim,vrm);clip=isV?c0:groundFixVRM(c0,vrm);}
-      cachePut(cm,'L'+it.key+'|'+sig,{clip,mi,gf:groundFixLast});
-    }catch(e){console.warn('準備失敗',it.name,e);}   // 失敗した曲は、再生時に通常どおり読み込んで本当のエラーを出す
+/** リスト再生の開始時に全モーションの読み込み・変換を先に済ませる（切り替え時に止まらないように）。 */
+async function precomputeListClips(list) {
+  const cacheMap = getClipCache();
+  if (!cacheMap) return true;
+  const signature = clipSignature(),
+    todo = list.items.filter(item => !cacheMap.has('L' + item.key + '|' + signature));
+  if (!todo.length) return true;
+  const token = ++motionLoadToken;
+  stopMotion(); // 変換は初期ポーズで行うので、再生を止めてから
+  let count = 0;
+  for (const item of todo) {
+    setStatus('リストを準備中… ' + ++count + '/' + todo.length + '（' + item.name + '）');
+    await new Promise(r => setTimeout(r, 0)); // 画面を更新する間を空ける
+    if (token !== motionLoadToken || (!vrm && !mmdMesh)) return false; // 準備中に別の操作があった
+    try {
+      const file = await loadListItemFile(item),
+        isVmd = /\.vmd$/i.test(file.name);
+      let vrmAnimation = null,
+        vmd = null,
+        morphInfo = null;
+      if (isVmd) {
+        const vmdLoader = new MMDLoader(),
+          url = URL.createObjectURL(file);
+        objectUrls.push(url);
+        vmd = await new Promise((ok, ng) => vmdLoader.loadVMD(url, ok, undefined, ng));
+      } else {
+        const gltfLoader = new GLTFLoader();
+        gltfLoader.register(p => new VRMAnimationLoaderPlugin(p));
+        vrmAnimation = (await gltfLoader.parseAsync(fixVrmaSpec(await file.arrayBuffer()), '')).userData
+          .vrmAnimations?.[0];
+        if (!vrmAnimation) throw new Error('VRMAのアニメーションが見つかりません');
+      }
+      if (token !== motionLoadToken || (!vrm && !mmdMesh)) return false;
+      groundFixLast = '';
+      let clip;
+      if (mmdMesh) {
+        mmdMesh.pose();
+        if (isVmd) morphInfo = fixMorphNames(vmd, mmdMesh);
+        const builtClip = isVmd
+          ? new MMDLoader().animationBuilder.build(vmd, mmdMesh)
+          : vrmaToMMD(vrmAnimation, mmdMesh);
+        clip = isVmd ? groundFixMMDClip(builtClip, mmdMesh) : builtClip;
+      } else {
+        vrm.humanoid.resetNormalizedPose();
+        const builtClip = isVmd ? vmdToVRM(vmd, vrm) : createVRMAnimationClip(vrmAnimation, vrm);
+        clip = isVmd ? builtClip : groundFixVRM(builtClip, vrm);
+      }
+      putClipCache(cacheMap, 'L' + item.key + '|' + signature, {clip, mi: morphInfo, gf: groundFixLast});
+    } catch (e) {
+      console.warn('準備失敗', item.name, e);
+    } // 失敗した曲は、再生時に通常どおり読み込んで本当のエラーを出す
   }
   return true;
 }
-async function playListFrom(L,key,opt){
-  const it=L.items.find(i=>i.key===key)||L.items[0];if(!it)return;
-  try{
-    if(opt&&opt.prep&&!(await prepareList(L)))return;
-    const f=await listFile(it);
-    playCtx={listId:L.id,key:it.key,n:1};
-    await loadMotion(f,{fromList:1,noHist:1,ck:'L'+it.key});
-  }catch(e){status('リスト再生に失敗：'+(e?.message||e));}
+/** リストの指定項目から再生する。options.prep で先に変換を済ませる。options.chain でつなぎ補間。 */
+async function playListFrom(list, key, options) {
+  const item = list.items.find(i => i.key === key) || list.items[0];
+  if (!item) return;
+  try {
+    if (options && options.prep && !(await precomputeListClips(list))) return;
+    const file = await loadListItemFile(item);
+    listPlayback = {listId: list.id, key: item.key, n: 1};
+    await loadMotion(file, {fromList: 1, noHist: 1, ck: 'L' + item.key, chain: !!(options && options.chain)});
+  } catch (e) {
+    setStatus('リスト再生に失敗：' + (e?.message || e));
+  }
 }
-async function playNext(){
-  if(advancing)return;advancing=true;
-  try{
-    const L=playCtx&&lists.find(l=>l.id===playCtx.listId);if(!L||!L.items.length){playCtx=null;return;}
-    let i=L.items.findIndex(x=>x.key===playCtx.key)+1;
-    if(i>=L.items.length){if(loopOn())i=0;else{listRender();status('リストの再生が終わりました（'+L.name+'）');return;}}
-    await playListFrom(L,L.items[i].key);
-  }finally{advancing=false;}
+/** リストの次の項目へ進む（最後まで来たらループ設定に従う）。 */
+async function playNextInList() {
+  if (isAdvancingList) return;
+  isAdvancingList = true;
+  try {
+    const list = listPlayback && savedLists.find(l => l.id === listPlayback.listId);
+    if (!list || !list.items.length) {
+      listPlayback = null;
+      return;
+    }
+    let nextIndex = list.items.findIndex(x => x.key === listPlayback.key) + 1;
+    if (nextIndex >= list.items.length) {
+      if (isLoopEnabled()) nextIndex = 0;
+      else {
+        renderList();
+        setStatus('リストの再生が終わりました（' + list.name + '）');
+        return;
+      }
+    }
+    await playListFrom(list, list.items[nextIndex].key, {chain: true});
+  } finally {
+    isAdvancingList = false;
+  }
 }
-function stopList(){   // 止めた時のポーズで固定（次の再生はloadMotionが初期化する）
-  playCtx=null;player.frozen=true;try{if(player.mixer)player.mixer.timeScale=0;}catch{}
-  listRender();status('停止しました（次の再生は最初のモーションから）');
+/** リスト再生を止め、その場のポーズで固定する。 */
+function stopListPlayback() {
+  // 止めた時のポーズで固定（次の再生はloadMotionが初期化する）
+  listPlayback = null;
+  activeBlend = pendingBlendFrom = null;
+  playback.frozen = true;
+  try {
+    if (playback.mixer) playback.mixer.timeScale = 0;
+  } catch {}
+  renderList();
+  setStatus('停止しました（次の再生は最初のモーションから）');
 }
-$('listSel').addEventListener('change',e=>{curListId=e.target.value===''?null:+e.target.value;saveSel();
-  if(playCtx&&playCtx.listId!==curListId){playCtx=null;stopMotion();status('リストを切り替えたので再生をリセットしました');}   // 別リストの再生は止めて初期状態へ
-  listRender();});
-$('listPlay').onclick=()=>{const L=curList();if(!L||!L.items.length)return;if(playCtx&&playCtx.listId===L.id&&player.action&&!player.done&&!player.frozen)stopList();else playListFrom(L,L.items[0].key,{prep:true});};
-$('listNext').onclick=()=>{const L=curList();if(!L||!L.items.length)return;let i=playCtx&&playCtx.listId===L.id?L.items.findIndex(x=>x.key===playCtx.key)+1:0;if(i>=L.items.length)i=0;playListFrom(L,L.items[i].key);};
-$('listDel').onclick=async()=>{
-  const L=curList();if(!L||!confirm('リスト「'+L.name+'」を削除しますか？（履歴のモーションは残ります）'))return;
-  try{const t=(await hdb()).transaction(['lists','lblobs'],'readwrite');t.objectStore('lists').delete(L.id);for(const it of L.items)t.objectStore('lblobs').delete(it.key);await txd(t);
-    if(playCtx&&playCtx.listId===L.id)playCtx=null;curListId=null;saveSel();await lRefresh();status('リストを削除しました');
-  }catch(e){status('リストの削除に失敗：'+(e?.message||e));}
+byId('listSel').addEventListener('change', e => {
+  selectedListId = e.target.value === '' ? null : +e.target.value;
+  saveSelectedListId();
+  if (listPlayback && listPlayback.listId !== selectedListId) {
+    listPlayback = null;
+    stopMotion();
+    setStatus('リストを切り替えたので再生をリセットしました');
+  } // 別リストの再生は止めて初期状態へ
+  renderList();
+});
+byId('listPlay').onclick = () => {
+  const L = getSelectedList();
+  if (!L || !L.items.length) return;
+  if (listPlayback && listPlayback.listId === L.id && playback.action && !playback.done && !playback.frozen)
+    stopListPlayback();
+  else playListFrom(L, L.items[0].key, {prep: true});
+};
+byId('listNext').onclick = () => {
+  const L = getSelectedList();
+  if (!L || !L.items.length) return;
+  let i =
+    listPlayback && listPlayback.listId === L.id ? L.items.findIndex(x => x.key === listPlayback.key) + 1 : 0;
+  if (i >= L.items.length) i = 0;
+  playListFrom(L, L.items[i].key);
+};
+byId('listDel').onclick = async () => {
+  const L = getSelectedList();
+  if (!L || !confirm('リスト「' + L.name + '」を削除しますか？（履歴のモーションは残ります）')) return;
+  try {
+    const t = (await openDb()).transaction(['lists', 'lblobs'], 'readwrite');
+    t.objectStore('lists').delete(L.id);
+    for (const it of L.items) t.objectStore('lblobs').delete(it.key);
+    await awaitTransaction(t);
+    if (listPlayback && listPlayback.listId === L.id) listPlayback = null;
+    selectedListId = null;
+    saveSelectedListId();
+    await refreshLists();
+    setStatus('リストを削除しました');
+  } catch (e) {
+    setStatus('リストの削除に失敗：' + (e?.message || e));
+  }
 };
 // 繰り返し回数：タップで 1→2→3…（99の次は1）、長押しで1に戻す
-const REP_MAX=99;let repTimer=0,repLong=false;
-async function setRep(L,it,v,btn){
-  it.rep=v;btn.textContent='×'+v;
-  try{const t=(await hdb()).transaction('lists','readwrite');t.objectStore('lists').put(L);await txd(t);}catch(err){status('回数の保存に失敗：'+(err?.message||err));}
+const REPEAT_MAX = 99;
+let repeatLongPressTimer = 0,
+  repeatLongPressed = false;
+/** リスト項目の繰り返し回数を保存して表示を更新する。 */
+async function setRepeatCount(L, it, v, btn) {
+  it.rep = v;
+  btn.textContent = '×' + v;
+  try {
+    const t = (await openDb()).transaction('lists', 'readwrite');
+    t.objectStore('lists').put(L);
+    await awaitTransaction(t);
+  } catch (err) {
+    setStatus('回数の保存に失敗：' + (err?.message || err));
+  }
 }
-$('listItems').addEventListener('pointerdown',e=>{
-  const b=e.target.closest('.lrepb');if(!b)return;repLong=false;clearTimeout(repTimer);
-  repTimer=setTimeout(()=>{repLong=true;const L=curList(),it=L&&L.items.find(i=>i.key===b.dataset.rep);if(it&&(it.rep|0||1)!==1)setRep(L,it,1,b);},500);
+byId('listItems').addEventListener('pointerdown', e => {
+  const b = e.target.closest('.lrepb');
+  if (!b) return;
+  repeatLongPressed = false;
+  clearTimeout(repeatLongPressTimer);
+  repeatLongPressTimer = setTimeout(() => {
+    repeatLongPressed = true;
+    const L = getSelectedList(),
+      it = L && L.items.find(i => i.key === b.dataset.rep);
+    if (it && (it.rep | 0 || 1) !== 1) setRepeatCount(L, it, 1, b);
+  }, 500);
 });
-for(const ev of ['pointerup','pointerleave','pointercancel'])$('listItems').addEventListener(ev,()=>clearTimeout(repTimer));
-$('listItems').addEventListener('click',e=>{
-  const L=curList();if(!L)return;const rm=e.target.closest('[data-lrm]'),pl=e.target.closest('[data-play]'),rb=e.target.closest('.lrepb');
-  if(rb){if(repLong){repLong=false;return;}const it=L.items.find(i=>i.key===rb.dataset.rep);if(it){const n=(it.rep|0||1)+1;setRep(L,it,n>REP_MAX?1:n,rb);}return;}
-  if(rm)removeFromList(L,rm.dataset.lrm);else if(pl)playListFrom(L,pl.dataset.play,{prep:true});
+for (const ev of ['pointerup', 'pointerleave', 'pointercancel'])
+  byId('listItems').addEventListener(ev, () => clearTimeout(repeatLongPressTimer));
+byId('listItems').addEventListener('click', e => {
+  const L = getSelectedList();
+  if (!L) return;
+  const rm = e.target.closest('[data-lrm]'),
+    pl = e.target.closest('[data-play]'),
+    rb = e.target.closest('.lrepb');
+  if (rb) {
+    if (repeatLongPressed) {
+      repeatLongPressed = false;
+      return;
+    }
+    const it = L.items.find(i => i.key === rb.dataset.rep);
+    if (it) {
+      const n = (it.rep | 0 || 1) + 1;
+      setRepeatCount(L, it, n > REPEAT_MAX ? 1 : n, rb);
+    }
+    return;
+  }
+  if (rm) removeFromList(L, rm.dataset.lrm);
+  else if (pl) playListFrom(L, pl.dataset.play, {prep: true});
 });
 // 並べ替え（ドラッグ&ドロップ：タッチでも使えるようPointer Eventsで実装。リスト名は変わらない）
-let ldrag=null;
-$('listItems').addEventListener('pointerdown',e=>{
-  const g=e.target.closest('.grip');if(!g)return;const it=g.closest('.litem');
-  ldrag={it,id:e.pointerId};it.classList.add('drag');g.setPointerCapture(e.pointerId);e.preventDefault();
+let listDragState = null;
+byId('listItems').addEventListener('pointerdown', e => {
+  const g = e.target.closest('.grip');
+  if (!g) return;
+  const it = g.closest('.litem');
+  listDragState = {it, id: e.pointerId};
+  it.classList.add('drag');
+  g.setPointerCapture(e.pointerId);
+  e.preventDefault();
 });
-$('listItems').addEventListener('pointermove',e=>{
-  if(!ldrag||e.pointerId!==ldrag.id)return;const box=$('listItems'),br=box.getBoundingClientRect();
-  if(e.clientY<br.top+22)box.scrollTop-=10;else if(e.clientY>br.bottom-22)box.scrollTop+=10;   // 端に寄せるとスクロール
-  for(const o of box.querySelectorAll('.litem')){
-    if(o===ldrag.it)continue;const r=o.getBoundingClientRect();
-    if(e.clientY<r.top+r.height/2){if(o.previousElementSibling!==ldrag.it)box.insertBefore(ldrag.it,o);return;}
+byId('listItems').addEventListener('pointermove', e => {
+  if (!listDragState || e.pointerId !== listDragState.id) return;
+  const box = byId('listItems'),
+    br = box.getBoundingClientRect();
+  if (e.clientY < br.top + 22) box.scrollTop -= 10;
+  else if (e.clientY > br.bottom - 22) box.scrollTop += 10; // 端に寄せるとスクロール
+  for (const o of box.querySelectorAll('.litem')) {
+    if (o === listDragState.it) continue;
+    const r = o.getBoundingClientRect();
+    if (e.clientY < r.top + r.height / 2) {
+      if (o.previousElementSibling !== listDragState.it) box.insertBefore(listDragState.it, o);
+      return;
+    }
   }
-  box.appendChild(ldrag.it);
+  box.appendChild(listDragState.it);
 });
-async function endDrag(e){
-  if(!ldrag||e.pointerId!==ldrag.id)return;const d=ldrag;ldrag=null;d.it.classList.remove('drag');
-  const L=curList();if(!L)return;
-  const order=[...$('listItems').querySelectorAll('.litem')].map(x=>x.dataset.key),map=new Map(L.items.map(i=>[i.key,i])),items=order.map(k=>map.get(k)).filter(Boolean);
-  if(items.length===L.items.length&&items.some((it,i)=>it!==L.items[i])){
-    L.items=items;
-    try{const t=(await hdb()).transaction('lists','readwrite');t.objectStore('lists').put(L);await txd(t);}catch(err){status('並べ替えの保存に失敗：'+(err?.message||err));}
+/** 並べ替えドラッグの終了：新しい順序をリストへ保存する。 */
+async function endListDrag(e) {
+  if (!listDragState || e.pointerId !== listDragState.id) return;
+  const d = listDragState;
+  listDragState = null;
+  d.it.classList.remove('drag');
+  const L = getSelectedList();
+  if (!L) return;
+  const order = [...byId('listItems').querySelectorAll('.litem')].map(x => x.dataset.key),
+    map = new Map(L.items.map(i => [i.key, i])),
+    items = order.map(k => map.get(k)).filter(Boolean);
+  if (items.length === L.items.length && items.some((it, i) => it !== L.items[i])) {
+    L.items = items;
+    try {
+      const t = (await openDb()).transaction('lists', 'readwrite');
+      t.objectStore('lists').put(L);
+      await awaitTransaction(t);
+    } catch (err) {
+      setStatus('並べ替えの保存に失敗：' + (err?.message || err));
+    }
   }
-  listRender();
+  renderList();
 }
-$('listItems').addEventListener('pointerup',endDrag);$('listItems').addEventListener('pointercancel',endDrag);
+byId('listItems').addEventListener('pointerup', endListDrag);
+byId('listItems').addEventListener('pointercancel', endListDrag);
 
 // ---- 保存：VRM/GLB・VRMA はそのまま、VMD→VRMA、MMD/FBX/OBJ→GLB に変換して書き出す ----
-const VRM_BONES=['hips','spine','chest','upperChest','neck','head','leftEye','rightEye','jaw',
-  ...['left','right'].flatMap(s=>[s+'Shoulder',s+'UpperArm',s+'LowerArm',s+'Hand',s+'UpperLeg',s+'LowerLeg',s+'Foot',s+'Toes']),
-  ...['left','right'].flatMap(s=>['Thumb','Index','Middle','Ring','Little'].flatMap(f=>(f==='Thumb'?['Metacarpal','Proximal','Distal']:['Proximal','Intermediate','Distal']).map(j=>s+f+j)))];
-const isVrmLike=()=>!mmdMesh&&modelFile&&(vrm||/\.(glb|vrm)$/i.test(modelFile.name));
-function exportVRMA(clip,vm){   // 正規化ボーン上のAnimationClip → VRMA(.glb)。VRM0.xは向きの違いを打ち消してVRM1.0基準で書く
-  const hu=vm.humanoid,flip=vm.meta?.metaVersion==='0';hu.resetNormalizedPose();
-  const bones=[],idxOf=new Map(),b2i=new Map(),n2b=new Map();
-  for(const b of VRM_BONES){const nd=hu.getNormalizedBoneNode(b);if(nd){idxOf.set(nd,bones.length);b2i.set(b,bones.length);n2b.set(nd.name,b);bones.push({name:b,nd});}}
-  if(!b2i.has('hips'))throw new Error('hipsボーンが見つかりません');
-  const gl=bones.map(({name,nd})=>({name,translation:[flip?-nd.position.x:nd.position.x,nd.position.y,flip?-nd.position.z:nd.position.z]})),roots=[];
-  bones.forEach(({nd},i)=>{let p=nd.parent;while(p&&!idxOf.has(p))p=p.parent;
-    if(p){const j=idxOf.get(p);(gl[j].children||(gl[j].children=[])).push(i);}else roots.push(i);});
-  const expr=new Map(),em=vm.expressionManager;
-  if(em)for(const en of['blink','aa','ih','ou','ee','oh','happy','angry','sad','surprised','relaxed','neutral','blinkLeft','blinkRight','lookUp','lookDown','lookLeft','lookRight']){let n=null;try{n=em.getExpressionTrackName(en);}catch{}if(n)expr.set(n,en);}
-  const parts=[],views=[],accs=[],samplers=[],channels=[],tAcc=new Map(),exprNode=new Map();let off=0;
-  const add=(f32,type,mm)=>{views.push({buffer:0,byteOffset:off,byteLength:f32.byteLength});parts.push(f32);off+=f32.byteLength;
-    const a={bufferView:views.length-1,componentType:5126,count:f32.length/({SCALAR:1,VEC3:3,VEC4:4})[type],type};
-    if(mm){let lo=Infinity,hi=-Infinity;for(const v of f32){if(v<lo)lo=v;if(v>hi)hi=v;}a.min=[lo];a.max=[hi];}
-    accs.push(a);return accs.length-1;};
-  const timeAcc=t=>{if(!tAcc.has(t))tAcc.set(t,add(Float32Array.from(t),'SCALAR',true));return tAcc.get(t);};
-  const chan=(times,vals,type,node,path)=>{samplers.push({input:timeAcc(times),output:add(vals,type),interpolation:'LINEAR'});channels.push({sampler:samplers.length-1,target:{node,path}});};
-  for(const tr of clip.tracks){
-    const dot=tr.name.lastIndexOf('.'),nn=tr.name.slice(0,dot),prop=tr.name.slice(dot+1),b=n2b.get(nn);
-    if(prop==='quaternion'&&b){const v=Float32Array.from(tr.values);if(flip)for(let i=0;i<v.length;i+=4){v[i]=-v[i];v[i+2]=-v[i+2];}chan(tr.times,v,'VEC4',b2i.get(b),'rotation');}
-    else if(prop==='position'&&b==='hips'){const v=Float32Array.from(tr.values);if(flip)for(let i=0;i<v.length;i+=3){v[i]=-v[i];v[i+2]=-v[i+2];}chan(tr.times,v,'VEC3',b2i.get('hips'),'translation');}
-    else if(expr.has(tr.name)){const en=expr.get(tr.name);let ni=exprNode.get(en);
-      if(ni==null){ni=gl.length;gl.push({name:'expression_'+en});roots.push(ni);exprNode.set(en,ni);}
-      const v=new Float32Array(tr.values.length*3);for(let i=0;i<tr.values.length;i++)v[i*3]=tr.values[i];chan(tr.times,v,'VEC3',ni,'translation');}   // 表情の重みはノードのtranslation.xに入れる（VRMAの仕様）
+// ============================================================================
+// 9. 保存（VRMA/GLBの書き出し）
+// ============================================================================
+const VRM_BONES = [
+  'hips',
+  'spine',
+  'chest',
+  'upperChest',
+  'neck',
+  'head',
+  'leftEye',
+  'rightEye',
+  'jaw',
+  ...['left', 'right'].flatMap(s => [
+    s + 'Shoulder',
+    s + 'UpperArm',
+    s + 'LowerArm',
+    s + 'Hand',
+    s + 'UpperLeg',
+    s + 'LowerLeg',
+    s + 'Foot',
+    s + 'Toes'
+  ]),
+  ...['left', 'right'].flatMap(s =>
+    ['Thumb', 'Index', 'Middle', 'Ring', 'Little'].flatMap(f =>
+      (f === 'Thumb' ? ['Metacarpal', 'Proximal', 'Distal'] : ['Proximal', 'Intermediate', 'Distal']).map(
+        j => s + f + j
+      )
+    )
+  )
+];
+/** 現在のモデルがVRM/GLB（そのまま保存できる形式）か。 */
+const isVrmLike = () => !mmdMesh && currentModelFile && (vrm || /\.(glb|vrm)$/i.test(currentModelFile.name));
+/** 正規化ボーン上のAnimationClip を VRMA(.glb) のBlobへ書き出す。VRM0.xは向きの違いを打ち消してVRM1.0基準で書く。 */
+function exportVRMA(clip, vrmModel) {
+  // 正規化ボーン上のAnimationClip → VRMA(.glb)。VRM0.xは向きの違いを打ち消してVRM1.0基準で書く
+  const humanoid = vrmModel.humanoid,
+    flip = vrmModel.meta?.metaVersion === '0';
+  humanoid.resetNormalizedPose();
+  const bones = [],
+    indexByNode = new Map(),
+    boneIndexByName = new Map(),
+    boneNameByNodeName = new Map();
+  for (const boneName of VRM_BONES) {
+    const node = humanoid.getNormalizedBoneNode(boneName);
+    if (node) {
+      indexByNode.set(node, bones.length);
+      boneIndexByName.set(boneName, bones.length);
+      boneNameByNodeName.set(node.name, boneName);
+      bones.push({name: boneName, nd: node});
+    }
   }
-  if(!channels.length)throw new Error('書き出せるトラックがありません');
-  const ext={specVersion:'1.0',humanoid:{humanBones:Object.fromEntries(bones.map((x,i)=>[x.name,{node:i}]))}};
-  if(exprNode.size)ext.expressions={preset:Object.fromEntries([...exprNode].map(([k,v])=>[k,{node:v}]))};
-  const json={asset:{version:'2.0',generator:'model_viewer'},extensionsUsed:['VRMC_vrm_animation'],scene:0,scenes:[{nodes:roots}],nodes:gl,
-    animations:[{name:clip.name||'motion',samplers,channels}],accessors:accs,bufferViews:views,buffers:[{byteLength:off}],extensions:{VRMC_vrm_animation:ext}};
-  let js=new TextEncoder().encode(JSON.stringify(json));const pad=(4-js.length%4)%4;
-  if(pad){const t=new Uint8Array(js.length+pad).fill(0x20);t.set(js);js=t;}
-  const bin=new Uint8Array(off);let o=0;for(const p of parts){bin.set(new Uint8Array(p.buffer,p.byteOffset,p.byteLength),o);o+=p.byteLength;}
-  const out=new Uint8Array(12+8+js.length+8+bin.length),dv=new DataView(out.buffer);
-  dv.setUint32(0,0x46546C67,true);dv.setUint32(4,2,true);dv.setUint32(8,out.length,true);
-  dv.setUint32(12,js.length,true);dv.setUint32(16,0x4E4F534A,true);out.set(js,20);
-  dv.setUint32(20+js.length,bin.length,true);dv.setUint32(24+js.length,0x004E4942,true);out.set(bin,28+js.length);
-  return new Blob([out],{type:'application/octet-stream'});
+  if (!boneIndexByName.has('hips')) throw new Error('hipsボーンが見つかりません');
+  const gltfNodes = bones.map(({name, nd: node}) => ({
+      name,
+      translation: [
+        flip ? -node.position.x : node.position.x,
+        node.position.y,
+        flip ? -node.position.z : node.position.z
+      ]
+    })),
+    roots = [];
+  bones.forEach(({nd: node}, i) => {
+    let p = node.parent;
+    while (p && !indexByNode.has(p)) p = p.parent;
+    if (p) {
+      const j = indexByNode.get(p);
+      (gltfNodes[j].children || (gltfNodes[j].children = [])).push(i);
+    } else roots.push(i);
+  });
+  const expressionNames = new Map(),
+    expressionManager = vrmModel.expressionManager;
+  if (expressionManager)
+    for (const expressionName of [
+      'blink',
+      'aa',
+      'ih',
+      'ou',
+      'ee',
+      'oh',
+      'happy',
+      'angry',
+      'sad',
+      'surprised',
+      'relaxed',
+      'neutral',
+      'blinkLeft',
+      'blinkRight',
+      'lookUp',
+      'lookDown',
+      'lookLeft',
+      'lookRight'
+    ]) {
+      let n = null;
+      try {
+        n = expressionManager.getExpressionTrackName(expressionName);
+      } catch {}
+      if (n) expressionNames.set(n, expressionName);
+    }
+  const binaryParts = [],
+    bufferViews = [],
+    accessors = [],
+    samplers = [],
+    channels = [],
+    timeAccessorCache = new Map(),
+    exprNode = new Map();
+  let byteOffset = 0;
+  const addAccessor = (f32, type, mm) => {
+    bufferViews.push({buffer: 0, byteOffset: byteOffset, byteLength: f32.byteLength});
+    binaryParts.push(f32);
+    byteOffset += f32.byteLength;
+    const a = {
+      bufferView: bufferViews.length - 1,
+      componentType: 5126,
+      count: f32.length / {SCALAR: 1, VEC3: 3, VEC4: 4}[type],
+      type
+    };
+    if (mm) {
+      let lo = Infinity,
+        hi = -Infinity;
+      for (const v of f32) {
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+      a.min = [lo];
+      a.max = [hi];
+    }
+    accessors.push(a);
+    return accessors.length - 1;
+  };
+  const getTimeAccessor = t => {
+    if (!timeAccessorCache.has(t))
+      timeAccessorCache.set(t, addAccessor(Float32Array.from(t), 'SCALAR', true));
+    return timeAccessorCache.get(t);
+  };
+  const addChannel = (times, vals, type, node, path) => {
+    samplers.push({input: getTimeAccessor(times), output: addAccessor(vals, type), interpolation: 'LINEAR'});
+    channels.push({sampler: samplers.length - 1, target: {node, path}});
+  };
+  for (const track of clip.tracks) {
+    const dot = track.name.lastIndexOf('.'),
+      nodeName = track.name.slice(0, dot),
+      property = track.name.slice(dot + 1),
+      boneName = boneNameByNodeName.get(nodeName);
+    if (property === 'quaternion' && boneName) {
+      const v = Float32Array.from(track.values);
+      if (flip)
+        for (let i = 0; i < v.length; i += 4) {
+          v[i] = -v[i];
+          v[i + 2] = -v[i + 2];
+        }
+      addChannel(track.times, v, 'VEC4', boneIndexByName.get(boneName), 'rotation');
+    } else if (property === 'position' && boneName === 'hips') {
+      const v = Float32Array.from(track.values);
+      if (flip)
+        for (let i = 0; i < v.length; i += 3) {
+          v[i] = -v[i];
+          v[i + 2] = -v[i + 2];
+        }
+      addChannel(track.times, v, 'VEC3', boneIndexByName.get('hips'), 'translation');
+    } else if (expressionNames.has(track.name)) {
+      const expressionName = expressionNames.get(track.name);
+      let ni = exprNode.get(expressionName);
+      if (ni == null) {
+        ni = gltfNodes.length;
+        gltfNodes.push({name: 'expression_' + expressionName});
+        roots.push(ni);
+        exprNode.set(expressionName, ni);
+      }
+      const v = new Float32Array(track.values.length * 3);
+      for (let i = 0; i < track.values.length; i++) v[i * 3] = track.values[i];
+      addChannel(track.times, v, 'VEC3', ni, 'translation');
+    } // 表情の重みはノードのtranslation.xに入れる（VRMAの仕様）
+  }
+  if (!channels.length) throw new Error('書き出せるトラックがありません');
+  const vrmaExtension = {
+    specVersion: '1.0',
+    humanoid: {humanBones: Object.fromEntries(bones.map((x, i) => [x.name, {node: i}]))}
+  };
+  if (exprNode.size)
+    vrmaExtension.expressions = {preset: Object.fromEntries([...exprNode].map(([k, v]) => [k, {node: v}]))};
+  const json = {
+    asset: {version: '2.0', generator: 'model_viewer'},
+    extensionsUsed: ['VRMC_vrm_animation'],
+    scene: 0,
+    scenes: [{nodes: roots}],
+    nodes: gltfNodes,
+    animations: [{name: clip.name || 'motion', samplers, channels}],
+    accessors: accessors,
+    bufferViews: bufferViews,
+    buffers: [{byteLength: byteOffset}],
+    extensions: {VRMC_vrm_animation: vrmaExtension}
+  };
+  let jsonBytes = new TextEncoder().encode(JSON.stringify(json));
+  const pad = (4 - (jsonBytes.length % 4)) % 4;
+  if (pad) {
+    const t = new Uint8Array(jsonBytes.length + pad).fill(0x20);
+    t.set(jsonBytes);
+    jsonBytes = t;
+  }
+  const binBytes = new Uint8Array(byteOffset);
+  let o = 0;
+  for (const p of binaryParts) {
+    binBytes.set(new Uint8Array(p.buffer, p.byteOffset, p.byteLength), o);
+    o += p.byteLength;
+  }
+  const out = new Uint8Array(12 + 8 + jsonBytes.length + 8 + binBytes.length),
+    dv = new DataView(out.buffer);
+  dv.setUint32(0, 0x46546c67, true);
+  dv.setUint32(4, 2, true);
+  dv.setUint32(8, out.length, true);
+  dv.setUint32(12, jsonBytes.length, true);
+  dv.setUint32(16, 0x4e4f534a, true);
+  out.set(jsonBytes, 20);
+  dv.setUint32(20 + jsonBytes.length, binBytes.length, true);
+  dv.setUint32(24 + jsonBytes.length, 0x004e4942, true);
+  out.set(binBytes, 28 + jsonBytes.length);
+  return new Blob([out], {type: 'application/octet-stream'});
 }
-async function saveMotion(){
-  if(!motionFile){status('先にモーションを読み込んでください');return;}
-  const f=motionFile,base=f.name.replace(/\.[^.]+$/,'');
-  if(!/\.vmd$/i.test(f.name)){download(f,f.name);status(f.name+' を保存しました（そのまま）');return;}
-  if(!vrm){status('VMD→VRMAの変換にはVRMモデルが必要です。VRMを開いてから保存してください');return;}
-  status('VRMAに変換中…');
-  try{
-    vrm.humanoid.resetNormalizedPose();   // 変換は初期ポーズ基準で行う
-    const url=URL.createObjectURL(f);let vmd;
-    try{vmd=await new Promise((ok,ng)=>new MMDLoader().loadVMD(url,ok,undefined,ng));}finally{URL.revokeObjectURL(url);}
-    const blob=exportVRMA(vmdToVRM(vmd,vrm),vrm);download(blob,base+'.vrma');status(base+'.vrma を保存しました（VMD→VRMA変換・'+fmt(blob.size)+'）');
-  }catch(e){console.error(e);status('VRMAへの変換に失敗：'+(e?.message||e));}
+/** モーションを保存する。VRMAはそのまま、VMDはVRMAへ変換して書き出す（変換にはVRMモデルが必要）。 */
+async function saveMotion() {
+  if (!currentMotionFile) {
+    setStatus('先にモーションを読み込んでください');
+    return;
+  }
+  const file = currentMotionFile,
+    base = file.name.replace(/\.[^.]+$/, '');
+  if (!/\.vmd$/i.test(file.name)) {
+    downloadBlob(file, file.name);
+    setStatus(file.name + ' を保存しました（そのまま）');
+    return;
+  }
+  if (!vrm) {
+    setStatus('VMD→VRMAの変換にはVRMモデルが必要です。VRMを開いてから保存してください');
+    return;
+  }
+  setStatus('VRMAに変換中…');
+  try {
+    vrm.humanoid.resetNormalizedPose(); // 変換は初期ポーズ基準で行う
+    const url = URL.createObjectURL(file);
+    let vmd;
+    try {
+      vmd = await new Promise((ok, ng) => new MMDLoader().loadVMD(url, ok, undefined, ng));
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+    const blob = exportVRMA(vmdToVRM(vmd, vrm), vrm);
+    downloadBlob(blob, base + '.vrma');
+    setStatus(base + '.vrma を保存しました（VMD→VRMA変換・' + formatBytes(blob.size) + '）');
+  } catch (e) {
+    console.error(e);
+    setStatus('VRMAへの変換に失敗：' + (e?.message || e));
+  }
 }
-const stdFrom=m=>new THREE.MeshStandardMaterial({name:m.name,color:m.color?m.color.clone():new THREE.Color(0xffffff),map:m.map||null,opacity:m.opacity??1,transparent:!!m.transparent,alphaTest:m.alphaTest||0,side:m.side,roughness:1,metalness:0});
-async function exportGLB(){
-  const {GLTFExporter}=await import('three/addons/exporters/GLTFExporter.js');
-  const obj=activeObject,swaps=[],p0=obj.position.clone(),s0=obj.scale.clone();
-  obj.traverse(o=>{if(!o.isMesh)return;const arr=Array.isArray(o.material),ms=arr?o.material:[o.material];   // MMDのトゥーン材質(ShaderMaterial)は標準材質に置き換えて書き出す
-    swaps.push([o,o.material]);const nm=ms.map(m=>m&&m.isShaderMaterial?stdFrom(m):m);o.material=arr?nm:nm[0];});
-  obj.position.set(0,0,0);if(mmdMesh)obj.scale.setScalar(MMD_SCALE);obj.updateMatrixWorld(true);
-  try{return await new Promise((ok,ng)=>new GLTFExporter().parse(obj,ok,ng,{binary:true,onlyVisible:false}));}
-  finally{for(const [o,m] of swaps)o.material=m;obj.position.copy(p0);obj.scale.copy(s0);obj.updateMatrixWorld(true);}
+/** MMDのトゥーン材質(ShaderMaterial)を、GLB書き出し用の標準材質へ置き換える。 */
+const toStandardMaterial = m =>
+  new THREE.MeshStandardMaterial({
+    name: m.name,
+    color: m.color ? m.color.clone() : new THREE.Color(0xffffff),
+    map: m.map || null,
+    opacity: m.opacity ?? 1,
+    transparent: !!m.transparent,
+    alphaTest: m.alphaTest || 0,
+    side: m.side,
+    roughness: 1,
+    metalness: 0
+  });
+/** 現在のモデル（MMD/FBX/OBJ含む）を GLB に書き出す。GLTFExporter は保存時に動的importする。 */
+async function exportGLB() {
+  const {GLTFExporter} = await import('three/addons/exporters/GLTFExporter.js');
+  const obj = loadedObject,
+    swaps = [],
+    originalPosition = obj.position.clone(),
+    originalScale = obj.scale.clone();
+  obj.traverse(o => {
+    if (!o.isMesh) return;
+    const isMaterialArray = Array.isArray(o.material),
+      materials = isMaterialArray ? o.material : [o.material]; // MMDのトゥーン材質(ShaderMaterial)は標準材質に置き換えて書き出す
+    swaps.push([o, o.material]);
+    const newMaterials = materials.map(m => (m && m.isShaderMaterial ? toStandardMaterial(m) : m));
+    o.material = isMaterialArray ? newMaterials : newMaterials[0];
+  });
+  obj.position.set(0, 0, 0);
+  if (mmdMesh) obj.scale.setScalar(MMD_SCALE);
+  obj.updateMatrixWorld(true);
+  try {
+    return await new Promise((ok, ng) =>
+      new GLTFExporter().parse(obj, ok, ng, {binary: true, onlyVisible: false})
+    );
+  } finally {
+    for (const [o, m] of swaps) o.material = m;
+    obj.position.copy(originalPosition);
+    obj.scale.copy(originalScale);
+    obj.updateMatrixWorld(true);
+  }
 }
-async function saveModel(){
-  if(!activeObject||!modelFile){status('先にモデルを読み込んでください');return;}
-  const base=modelFile.name.replace(/\.[^.]+$/,'');
-  if(isVrmLike()){download(modelFile,modelFile.name);status(modelFile.name+' を保存しました（そのまま）');return;}
-  status('GLBに変換中…');
-  try{const buf=await exportGLB();download(new Blob([buf],{type:'model/gltf-binary'}),base+'.glb');status(base+'.glb を保存しました（VRM形式への変換は未対応のためGLB）');}
-  catch(e){console.error(e);status('GLBへの書き出しに失敗：'+(e?.message||e));}
+/** モデルを保存する。VRM/GLBはそのまま、それ以外はGLBへ変換する。 */
+async function saveModel() {
+  if (!loadedObject || !currentModelFile) {
+    setStatus('先にモデルを読み込んでください');
+    return;
+  }
+  const base = currentModelFile.name.replace(/\.[^.]+$/, '');
+  if (isVrmLike()) {
+    downloadBlob(currentModelFile, currentModelFile.name);
+    setStatus(currentModelFile.name + ' を保存しました（そのまま）');
+    return;
+  }
+  setStatus('GLBに変換中…');
+  try {
+    const buf = await exportGLB();
+    downloadBlob(new Blob([buf], {type: 'model/gltf-binary'}), base + '.glb');
+    setStatus(base + '.glb を保存しました（VRM形式への変換は未対応のためGLB）');
+  } catch (e) {
+    console.error(e);
+    setStatus('GLBへの書き出しに失敗：' + (e?.message || e));
+  }
 }
-$('save').onclick=e=>popup(e.currentTarget,'保存',[
-  {label:'モデルを保存（'+(!activeObject?'未読込':isVrmLike()?'VRM/GLBをそのまま':'GLBに変換')+'）',fn:saveModel},
-  {label:'モーションを保存（'+(!motionFile?'未読込':/\.vmd$/i.test(motionFile.name)?'VRMAに変換':'VRMAをそのまま')+'）',fn:saveMotion}]);
+byId('save').onclick = e =>
+  showPopup(e.currentTarget, '保存', [
+    {
+      label:
+        'モデルを保存（' +
+        (!loadedObject ? '未読込' : isVrmLike() ? 'VRM/GLBをそのまま' : 'GLBに変換') +
+        '）',
+      fn: saveModel
+    },
+    {
+      label:
+        'モーションを保存（' +
+        (!currentMotionFile
+          ? '未読込'
+          : /\.vmd$/i.test(currentMotionFile.name)
+            ? 'VRMAに変換'
+            : 'VRMAをそのまま') +
+        '）',
+      fn: saveMotion
+    }
+  ]);
 
 // ---- モーション：VRMA/VMD を VRM/MMD のどちらにも適用 ----
 // MMD：three.jsの_optimizeIKはIKリンクのenabledをモデルのジオメトリ側に書き込む（物理ONでfalseになる）。新しいhelperへ持ち越されるので毎回戻す
-function resetMMDState(){
-  if(!mmdMesh)return;
-  try{for(const ik of mmdMesh.geometry.userData.MMD?.iks||[])for(const l of ik.links)l.enabled=true;}catch(e){console.warn(e);}
-  mmdMesh.pose();mmdMesh.updateMatrixWorld(true);
+// ============================================================================
+// 10. モーション再生（MMD物理・指の曲げ・つなぎ補間・読み込み）
+// ============================================================================
+/** MMD：IKリンクの enabled を戻し、初期ポーズに戻す（three.jsが物理ONでfalseにするため毎回必要）。 */
+function resetMMDState() {
+  if (!mmdMesh) return;
+  try {
+    for (const ik of mmdMesh.geometry.userData.MMD?.iks || []) for (const l of ik.links) l.enabled = true;
+  } catch (e) {
+    console.warn(e);
+  }
+  mmdMesh.pose();
+  mmdMesh.updateMatrixWorld(true);
 }
 // 物理(Ammo)はモデルごとに1回だけ作り、モーション切替ではhelperだけ作り直して物理は引き継ぐ（作り直すとworldが溜まり不安定になる）
-function disposeHelper(){helper=null;}
-function makeMMDPhysics(){   // Ammo読込済みで呼ぶ（同期）。アニメ無しで物理だけ作る
-  if(mmdPhys||!mmdMesh)return mmdPhys;
-  const h=new MMDAnimationHelper();h.add(mmdMesh,{physics:true,warmup:0});
-  mmdPhys=h.objects.get(mmdMesh)?.physics||null;try{h.remove(mmdMesh);}catch{}
-  return mmdPhys;
+/** MMDAnimationHelper への参照を捨てる（物理は引き継ぐため別管理）。 */
+function disposeMmdHelper() {
+  mmdHelper = null;
 }
-let zeroV=null;
-function resetPhys(mp){   // 剛体をボーンに合わせ、速度・力も消す
-  mp.reset();const A=window.Ammo;if(!A?.btVector3)return;
-  try{zeroV=zeroV||new A.btVector3(0,0,0);for(const b of mp.bodies){try{b.body.setLinearVelocity(zeroV);b.body.setAngularVelocity(zeroV);b.body.clearForces();}catch{}}}catch{}
+/** MMDの物理(Ammo)をモデルごとに1回だけ作る。Ammo読込済みで呼ぶ。 */
+function makeMMDPhysics() {
+  // Ammo読込済みで呼ぶ（同期）。アニメ無しで物理だけ作る
+  if (mmdPhysics || !mmdMesh) return mmdPhysics;
+  const tempHelper = new MMDAnimationHelper();
+  tempHelper.add(mmdMesh, {physics: true, warmup: 0});
+  mmdPhysics = tempHelper.objects.get(mmdMesh)?.physics || null;
+  try {
+    tempHelper.remove(mmdMesh);
+  } catch {}
+  return mmdPhysics;
 }
-function destroyPhysics(mp){   // モデル切替時：worldから剛体・拘束を外す（Ammoオブジェクト自体は触らない）
-  if(!mp?.world)return;
-  try{for(const c of mp.constraints||[])try{mp.world.removeConstraint(c.constraint);}catch{}for(const b of mp.bodies||[])try{mp.world.removeRigidBody(b.body);}catch{}}catch(e){console.warn(e);}
+let zeroVector = null;
+/** 剛体をボーンの位置に合わせ、速度・力を消す。 */
+function resetPhysicsToBones(physics) {
+  // 剛体をボーンに合わせ、速度・力も消す
+  physics.reset();
+  const ammo = window.Ammo;
+  if (!ammo?.btVector3) return;
+  try {
+    zeroVector = zeroVector || new ammo.btVector3(0, 0, 0);
+    for (const b of physics.bodies) {
+      try {
+        b.body.setLinearVelocity(zeroVector);
+        b.body.setAngularVelocity(zeroVector);
+        b.body.clearForces();
+      } catch {}
+    }
+  } catch {}
 }
-const physHoldHook=()=>{if(physHold>0)try{const p=helper?.objects.get(mmdMesh)?.physics;if(p)resetPhys(p);}catch{}};   // 物理の直前に毎フレーム吸着
-function attachPhysics(ob,mp){   // 物理を現在の姿勢に合わせてhelperへ接続
-  mmdMesh.updateMatrixWorld(true);ob.physics=mp;helper.enable('physics',true);helper._optimizeIK(mmdMesh,true);
-  try{resetPhys(mp);}catch{}physHold=PHYS_HOLD;helper.onBeforePhysics=physHoldHook;
-}
-function stopMotion(){player={mixer:null,action:null,done:false};curl=null;mixer?.stopAllAction();mixer=null;vrm?.humanoid.resetNormalizedPose();disposeHelper();resetMMDState();}
-// ---- 指のリラックス：モーションに指のキーがない指だけ軽く曲げる（lanternの握りと同じ比率：根元弱め・真ん中強め・先弱め。親指は触らない） ----
-const FINGERS=[['Index','人指',.7],['Middle','中指',1],['Ring','薬指',1.1],['Little','小指',1.2]],FJOINTS=[['Proximal','１',.35],['Intermediate','２',.5],['Distal','３',.3]];
-const restPos=b=>{const v=new THREE.Vector3();for(let x=b;x?.isBone;x=x.parent)v.add(x.position);return v;};   // 初期ポーズでの位置（MMD単位）
-const fingerK=()=>0.7+Math.random()*0.6;   // 指ごとの個体差
-const animatedBy=(clip,n)=>clip.tracks.some(t=>t.name.includes('['+n+']')||t.name.startsWith(n+'.'));
-function setupCurlVRM(clip){
-  const hu=vrm.humanoid,fl=vrm.meta?.metaVersion==='0'?-1:1;curl=[];
-  for(const [side,sg] of [['left',-1],['right',1]])for(const [en,,m] of FINGERS){const k=fingerK();
-    for(const [j,,c] of FJOINTS){const nd=hu.getNormalizedBoneNode(side+en+j);if(nd&&!animatedBy(clip,nd.name))curl.push({nd,vrm:1,a:fl*sg*c*m*k});}}
-}
-function setupCurlMMD(clip){
-  const bn=n=>mmdMesh.skeleton.getBoneByName(n);curl=[];
-  for(const side of ['左','右']){
-    const ia=bn(side+'人指１'),li=bn(side+'小指１');if(!ia||!li)continue;
-    const axis=restPos(ia).sub(restPos(li)).normalize().multiplyScalar(side==='右'?1:-1);   // 小指→人指の付け根（手の甲の幅）。手のひら側へ倒す向きは左右で逆
-    for(const [,jp,m] of FINGERS){const k=fingerK();
-      for(const [,n,c] of FJOINTS){const nd=bn(side+jp+n);if(nd&&!animatedBy(clip,nd.name))curl.push({nd,axis,q0:nd.quaternion.clone(),a:c*m*k,w:0});}}
+/** モデル切替時に、物理worldから剛体と拘束を外す。 */
+function destroyPhysics(physics) {
+  // モデル切替時：worldから剛体・拘束を外す（Ammoオブジェクト自体は触らない）
+  if (!physics?.world) return;
+  try {
+    for (const constraintEntry of physics.constraints || [])
+      try {
+        physics.world.removeConstraint(constraintEntry.constraint);
+      } catch {}
+    for (const bodyEntry of physics.bodies || [])
+      try {
+        physics.world.removeRigidBody(bodyEntry.body);
+      } catch {}
+  } catch (e) {
+    console.warn(e);
   }
 }
-const _cq=new THREE.Quaternion(),_cz=new THREE.Vector3(0,0,1);
-function applyCurl(dt){
-  if(!curl)return;const hc=+$('hand').value,k=1-Math.exp(-dt*8);
-  for(const e of curl){
-    if(e.vrm)e.nd.quaternion.setFromAxisAngle(_cz,e.a*hc);
-    else{e.w+=(1-e.w)*k;e.nd.quaternion.copy(e.q0).slerp(_cq.setFromAxisAngle(e.axis,e.a*hc).multiply(e.q0),e.w);}   // MMD：毎フレーム初期姿勢から作り直す（helperが毎フレーム骨を巻き戻すため）。wで動き始めをなめらかに
+/** 開始直後の一定時間、毎フレーム剛体をボーンへ吸着させるフック。 */
+const physicsHoldHook = () => {
+  if (physicsHoldSec > 0)
+    try {
+      const physics = mmdHelper?.objects.get(mmdMesh)?.physics;
+      if (physics) resetPhysicsToBones(physics);
+    } catch {}
+}; // 物理の直前に毎フレーム吸着
+/** 物理を現在の姿勢に合わせて MMDAnimationHelper へ接続する。 */
+function attachPhysicsToHelper(helperObject, physics) {
+  // 物理を現在の姿勢に合わせてhelperへ接続
+  mmdMesh.updateMatrixWorld(true);
+  helperObject.physics = physics;
+  mmdHelper.enable('physics', true);
+  mmdHelper._optimizeIK(mmdMesh, true);
+  try {
+    resetPhysicsToBones(physics);
+  } catch {}
+  physicsHoldSec = PHYSICS_HOLD_SEC;
+  mmdHelper.onBeforePhysics = physicsHoldHook;
+}
+let activeBlend = null,
+  pendingBlendFrom = null; // つなぎ補間の状態
+/** 再生中のモーションを止めて初期ポーズへ戻す（補間・指の曲げ・helper を破棄）。 */
+function stopMotion() {
+  activeBlend = pendingBlendFrom = null;
+  playback = {mixer: null, action: null, done: false};
+  fingerCurlTargets = null;
+  vrmMixer?.stopAllAction();
+  vrmMixer = null;
+  vrm?.humanoid.resetNormalizedPose();
+  disposeMmdHelper();
+  resetMMDState();
+}
+// ---- 指のリラックス：モーションに指のキーがない指だけ軽く曲げる（曲げる比率：根元弱め・真ん中強め・先弱め。親指は触らない） ----
+const FINGERS = [
+    ['Index', '人指', 0.7],
+    ['Middle', '中指', 1],
+    ['Ring', '薬指', 1.1],
+    ['Little', '小指', 1.2]
+  ],
+  FINGER_JOINTS = [
+    ['Proximal', '１', 0.35],
+    ['Intermediate', '２', 0.5],
+    ['Distal', '３', 0.3]
+  ];
+/** ボーンの初期ポーズでの位置（MMD単位）を、親をたどって合計して返す。 */
+const restPos = b => {
+  const v = new THREE.Vector3();
+  for (let x = b; x?.isBone; x = x.parent) v.add(x.position);
+  return v;
+}; // 初期ポーズでの位置（MMD単位）
+/** 指ごとの曲げ量に個体差をつける係数（0.7〜1.3）。 */
+const randomFingerFactor = () => 0.7 + Math.random() * 0.6; // 指ごとの個体差
+/** そのボーンにクリップのキーがあるか。 */
+const isTrackedByClip = (clip, n) =>
+  clip.tracks.some(t => t.name.includes('[' + n + ']') || t.name.startsWith(n + '.'));
+/** VRM：モーションに指のキーが無い指だけ、軽く曲げる設定を作る。 */
+function setupCurlVRM(clip) {
+  const humanoid = vrm.humanoid,
+    handednessFlip = vrm.meta?.metaVersion === '0' ? -1 : 1;
+  fingerCurlTargets = [];
+  for (const [side, sideSign] of [
+    ['left', -1],
+    ['right', 1]
+  ])
+    for (const [fingerName, , fingerWeight] of FINGERS) {
+      const individualFactor = randomFingerFactor();
+      for (const [j, , jointWeight] of FINGER_JOINTS) {
+        const boneNode = humanoid.getNormalizedBoneNode(side + fingerName + j);
+        if (boneNode && !isTrackedByClip(clip, boneNode.name))
+          fingerCurlTargets.push({
+            nd: boneNode,
+            vrm: 1,
+            a: handednessFlip * sideSign * jointWeight * fingerWeight * individualFactor
+          });
+      }
+    }
+}
+/** MMD：モーションに指のキーが無い指だけ、軽く曲げる設定を作る（手の甲の幅の向きを軸にする）。 */
+function setupCurlMMD(clip) {
+  const getBone = jointSuffix => mmdMesh.skeleton.getBoneByName(jointSuffix);
+  fingerCurlTargets = [];
+  for (const side of ['左', '右']) {
+    const indexBase = getBone(side + '人指１'),
+      littleBase = getBone(side + '小指１');
+    if (!indexBase || !littleBase) continue;
+    const axis = restPos(indexBase)
+      .sub(restPos(littleBase))
+      .normalize()
+      .multiplyScalar(side === '右' ? 1 : -1); // 小指→人指の付け根（手の甲の幅）。手のひら側へ倒す向きは左右で逆
+    for (const [, fingerJp, fingerWeight] of FINGERS) {
+      const individualFactor = randomFingerFactor();
+      for (const [, jointSuffix, jointWeight] of FINGER_JOINTS) {
+        const boneNode = getBone(side + fingerJp + jointSuffix);
+        if (boneNode && !isTrackedByClip(clip, boneNode.name))
+          fingerCurlTargets.push({
+            nd: boneNode,
+            axis,
+            q0: boneNode.quaternion.clone(),
+            a: jointWeight * fingerWeight * individualFactor,
+            w: 0
+          });
+      }
+    }
+  }
+}
+const curlTmpQuat = new THREE.Quaternion(),
+  CURL_AXIS_Z = new THREE.Vector3(0, 0, 1);
+/** 毎フレーム、指の曲げを反映する（スライダー「指の曲げ」で強さを調整）。 */
+function applyCurl(dt) {
+  if (!fingerCurlTargets) return;
+  const curlAmount = +byId('hand').value,
+    smoothing = 1 - Math.exp(-dt * 8);
+  for (const entry of fingerCurlTargets) {
+    if (entry.vrm) entry.nd.quaternion.setFromAxisAngle(CURL_AXIS_Z, entry.a * curlAmount);
+    else {
+      entry.w += (1 - entry.w) * smoothing;
+      entry.nd.quaternion
+        .copy(entry.q0)
+        .slerp(curlTmpQuat.setFromAxisAngle(entry.axis, entry.a * curlAmount).multiply(entry.q0), entry.w);
+    } // MMD：毎フレーム初期姿勢から作り直す（helperが毎フレーム骨を巻き戻すため）。wで動き始めをなめらかに
   }
 }
 // ---- 表情（モーフ）名の合わせ込み：three.jsは名前が完全一致するモーフだけ反映する。全角半角・空白・大文字小文字の違いと、VMDの名前が15バイトで切れている場合を補う ----
-function fixMorphNames(vmd,mesh){
-  const dict=mesh.morphTargetDictionary||{},names=Object.keys(dict),nz=t=>t.normalize('NFKC').replace(/\s+/g,'').toLowerCase();
-  const nm=names.map(n=>[n,nz(n)]),map=new Map(),all=new Set();let ok=0,fixed=0;
-  for(const m of vmd.morphs||[])all.add(m.morphName);
-  for(const v of all){
-    if(dict[v]!==undefined){ok++;continue;}
-    const z=nz(v);if(!z)continue;
-    let hit=nm.find(([,t])=>t===z);                                                    // 正規化すれば一致
-    if(!hit){const c=nm.filter(([,t])=>t.startsWith(z));if(c.length)hit=c.sort((a,b)=>a[1].length-b[1].length)[0];}   // 切れた名前：前方一致で一番近いもの
-    if(hit){map.set(v,hit[0]);fixed++;}
-  }
-  if(map.size)for(const m of vmd.morphs)if(map.has(m.morphName))m.morphName=map.get(m.morphName);
-  return {total:all.size,ok,fixed};
-}
-let motionTok=0;
-async function loadMotion(f,o={}){
-  if(!f)return;motionFile=f;
-  if(!o.reapply){curIds.motion=null;if(!o.fromList)playCtx=null;}   // 履歴などから単体で選んだらリスト再生は解除
-  const tok=++motionTok;
-  if(!o.reapply)motionCK=o.ck||null;   // クリップのキャッシュキー（履歴・リストのモーションだけ。再適用は直前のキーを引き継ぐ）
-  const ckey=motionCK?motionCK+'|'+clipSig():null,cm=cacheOf(),hit=ckey&&cm?cm.get(ckey):null;
-  if(!vrm&&!mmdMesh){status(f.name+' を保持しました（モデルを開くと適用します）');if(!o.reapply&&!o.noHist)saveHist('motion',f,o.hid);else histRender();return;}   // モデル未読込でも保持し、モデルを開いた時に適用
-  const isV=/\.vmd$/i.test(f.name);status('モーション読み込み中…');
-  try{
-    let anim=null,vmd=null,mi=null;
-    if(!hit){
-    if(isV){const L=new MMDLoader(),url=URL.createObjectURL(f);urls.push(url);vmd=await new Promise((ok,ng)=>L.loadVMD(url,ok,undefined,ng));}
-    else{const l=new GLTFLoader();l.register(p=>new VRMAnimationLoaderPlugin(p));
-      anim=(await l.parseAsync(fixVrmaSpec(await f.arrayBuffer()),'')).userData.vrmAnimations?.[0];
-      if(!anim)throw new Error('VRMAのアニメーションが見つかりません');}
-    }   // !hit（キャッシュがあれば読み込み・変換を省く）
-    let phys=false,physNote='';
-    if(mmdMesh&&$('physics').checked){status('MMDの物理エンジン（Ammo.js）を読み込み中…');phys=await ensureAmmo();if(!phys)physNote='　（Ammo.jsを読み込めず物理なし）';}
-    if(tok!==motionTok||(!vrm&&!mmdMesh))return;   // 読み込み中に別のモーション／モデルが選ばれた
-    stopMotion();groundFixLast='';physHold=0;physErr=0;   // 読み込みが済んでから切り替える（リストの連続再生で、つなぎ目にTポーズが一瞬出ないように）
-    if(mmdMesh){
-      let clip;mmdMesh.pose();
-      if(hit){clip=hit.clip;mi=hit.mi;groundFixLast=hit.gf;}
-      else{if(isV)mi=fixMorphNames(vmd,mmdMesh);const clip0=isV?new MMDLoader().animationBuilder.build(vmd,mmdMesh):vrmaToMMD(anim,mmdMesh);clip=isV?groundFixMMDClip(clip0,mmdMesh):clip0;if(ckey)cachePut(cm,ckey,{clip,mi,gf:groundFixLast});}
-      helper=new MMDAnimationHelper({afterglow:0,sync:false});helper.add(mmdMesh,{animation:clip,physics:false});   // afterglow/syncはクリップの長さを書き換えて末尾に待ち時間を足す（切り替え・ループで止まる原因）ので使わない
-      helper.enable('ik',isV);setupCurlMMD(clip);
-      const ob=helper.objects.get(mmdMesh);
-      if(phys&&ob){try{const mp=makeMMDPhysics();if(mp){helper._animateMesh(mmdMesh,0);attachPhysics(ob,mp);}else phys=false;}catch(e){console.warn('物理の作成',e);phys=false;physNote='　（物理の作成に失敗）';}}   // 0フレーム目の姿勢にしてから物理をそろえる
-      const hm=helper.objects.get(mmdMesh)?.mixer;if(hm)armPlayer(hm,hm.clipAction(clip));
-    }else{
-      let vc;
-      if(hit){vc=hit.clip;groundFixLast=hit.gf;}
-      else{const vc0=isV?vmdToVRM(vmd,vrm):createVRMAnimationClip(anim,vrm);vc=isV?vc0:groundFixVRM(vc0,vrm);if(ckey)cachePut(cm,ckey,{clip:vc,mi:null,gf:groundFixLast});}
-      mixer=new THREE.AnimationMixer(vrm.scene);const act=mixer.clipAction(vc);act.play();setupCurlVRM(vc);armPlayer(mixer,act);
+/** VMDの表情名をモデルのモーフ名に合わせる（全角半角・大文字小文字・15バイトで切れた名前を補正）。戻り値：{total, ok, fixed}。 */
+function fixMorphNames(vmd, mesh) {
+  const dict = mesh.morphTargetDictionary || {},
+    names = Object.keys(dict),
+    normalizeMorphName = t => t.normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+  const normalizedNames = names.map(n => [n, normalizeMorphName(n)]),
+    renameMap = new Map(),
+    vmdMorphNames = new Set();
+  let okCount = 0,
+    fixedCount = 0;
+  for (const m of vmd.morphs || []) vmdMorphNames.add(m.morphName);
+  for (const vmdName of vmdMorphNames) {
+    if (dict[vmdName] !== undefined) {
+      okCount++;
+      continue;
     }
-    status(f.name+' を再生中（'+(isV?'VMD':'VRMA')+' → '+(mmdMesh?'MMD':'VRM')+'）'+(phys?'・物理ON':'')+physNote+listTag()+(groundFixLast?'　'+groundFixLast:'')+(mi&&mi.total?'　表情 '+(mi.ok+mi.fixed)+'/'+mi.total+'件を反映'+(mi.fixed?'（名前補正'+mi.fixed+'）':''):''));
-    if(!o.reapply&&!o.noHist)saveHist('motion',f,o.hid);else if(!o.reapply)histRender();
-    listRender();
-  }catch(err){console.error(err);motionFile=null;curIds.motion=null;histRender();status('モーション読込失敗：'+(err?.message||err));}
+    const normalizedName = normalizeMorphName(vmdName);
+    if (!normalizedName) continue;
+    let hit = normalizedNames.find(([, t]) => t === normalizedName); // 正規化すれば一致
+    if (!hit) {
+      const candidates = normalizedNames.filter(([, t]) => t.startsWith(normalizedName));
+      if (candidates.length) hit = candidates.sort((a, b) => a[1].length - b[1].length)[0];
+    } // 切れた名前：前方一致で一番近いもの
+    if (hit) {
+      renameMap.set(vmdName, hit[0]);
+      fixedCount++;
+    }
+  }
+  if (renameMap.size)
+    for (const m of vmd.morphs) if (renameMap.has(m.morphName)) m.morphName = renameMap.get(m.morphName);
+  return {total: vmdMorphNames.size, ok: okCount, fixed: fixedCount};
+}
+const APP_VERSION = '1.00',
+  BUILD_DATE = '2026-10-19';
+byId('ver').textContent = 'v' + APP_VERSION + '・' + BUILD_DATE;
+console.info('3D Model Viewer v' + APP_VERSION + ' (build ' + BUILD_DATE + ')');
+// ---- つなぎ補間：リスト連続再生（次へ進む・繰り返し）のときだけ、前の最後の姿勢→次の最初の姿勢をなめらかにつなぐ ----
+// 差が大きすぎる（enter/exitのようにかけ離れた）場合は補間しない。しきい値は下の定数で調整。
+const BLEND_TOP_DEG = 60,
+  BLEND_MAX_DEG = 120,
+  BLEND_MIN_SEC = 0.2,
+  BLEND_MAX_SEC = 0.6;
+const blendTmpQuat = new THREE.Quaternion(),
+  blendTmpPos = new THREE.Vector3();
+/** つなぎ補間の対象ボーン一覧を返す。 */
+function blendNodes() {
+  if (mmdHelper || mmdMesh) return mmdMesh ? mmdMesh.skeleton.bones : [];
+  const r = vrm?.humanoid?.normalizedHumanBonesRoot,
+    out = [];
+  if (r)
+    r.traverse(o => {
+      if (o !== r) out.push(o);
+    });
+  return out;
+}
+/** 現在の全ボーンの姿勢を記録する（つなぎ補間の「前の最後の姿勢」）。 */
+function blendCapture() {
+  return vrm || mmdMesh ? blendNodes().map(n => ({n, q: n.quaternion.clone(), p: n.position.clone()})) : null;
+}
+/** つなぎ補間を1フレーム進める。姿勢の差が大きすぎる場合は補間しない。 */
+function blendStep(dt) {
+  if (pendingBlendFrom) {
+    const from = pendingBlendFrom;
+    pendingBlendFrom = null;
+    const angles = from
+      .map(snapshot => 2 * Math.acos(Math.min(1, Math.abs(snapshot.q.dot(snapshot.n.quaternion)))) * 57.29578)
+      .sort((a, b) => b - a);
+    const topCount = Math.min(8, angles.length),
+      topAverageDeg = topCount ? angles.slice(0, topCount).reduce((a, b) => a + b, 0) / topCount : 0; // 大きくずれた上位8ボーンの平均
+    if (topCount && topAverageDeg <= BLEND_TOP_DEG && angles[0] <= BLEND_MAX_DEG)
+      activeBlend = {
+        from,
+        t: 0,
+        dur: THREE.MathUtils.clamp(BLEND_MIN_SEC + topAverageDeg * 0.006, BLEND_MIN_SEC, BLEND_MAX_SEC)
+      };
+  }
+  if (!activeBlend) return;
+  activeBlend.t += dt;
+  const progress = Math.min(1, activeBlend.t / activeBlend.dur),
+    w = progress * progress * (3 - 2 * progress);
+  for (const snapshot of activeBlend.from) {
+    blendTmpQuat.copy(snapshot.n.quaternion);
+    snapshot.n.quaternion.copy(snapshot.q).slerp(blendTmpQuat, w);
+    blendTmpPos.copy(snapshot.n.position);
+    snapshot.n.position.lerpVectors(snapshot.p, blendTmpPos, w);
+  }
+  if (progress >= 1) activeBlend = null;
+}
+let motionLoadToken = 0;
+/** モーション(VRMA/VMD)を読み込み、現在のVRM/MMD用に変換して再生する。options：reapply（設定変更後の再適用）, fromList, noHist, chain（つなぎ補間）, ck（キャッシュキー）, hid（履歴ID）。 */
+async function loadMotion(file, options = {}) {
+  if (!file) return;
+  currentMotionFile = file;
+  if (!options.reapply) {
+    currentHistoryIds.motion = null;
+    if (!options.fromList) listPlayback = null;
+  } // 履歴などから単体で選んだらリスト再生は解除
+  const token = ++motionLoadToken;
+  if (!options.reapply) motionCacheKey = options.ck || null; // クリップのキャッシュキー（履歴・リストのモーションだけ。再適用は直前のキーを引き継ぐ）
+  const cacheKey = motionCacheKey ? motionCacheKey + '|' + clipSignature() : null,
+    cacheMap = getClipCache(),
+    cachedEntry = cacheKey && cacheMap ? cacheMap.get(cacheKey) : null;
+  if (!vrm && !mmdMesh) {
+    setStatus(file.name + ' を保持しました（モデルを開くと適用します）');
+    if (!options.reapply && !options.noHist) saveToHistory('motion', file, options.hid);
+    else renderHistory();
+    return;
+  } // モデル未読込でも保持し、モデルを開いた時に適用
+  const isVmd = /\.vmd$/i.test(file.name);
+  setStatus('モーション読み込み中…');
+  try {
+    let vrmAnimation = null,
+      vmd = null,
+      morphInfo = null;
+    if (!cachedEntry) {
+      if (isVmd) {
+        const vmdLoader = new MMDLoader(),
+          url = URL.createObjectURL(file);
+        objectUrls.push(url);
+        vmd = await new Promise((ok, ng) => vmdLoader.loadVMD(url, ok, undefined, ng));
+      } else {
+        const gltfLoader = new GLTFLoader();
+        gltfLoader.register(p => new VRMAnimationLoaderPlugin(p));
+        vrmAnimation = (await gltfLoader.parseAsync(fixVrmaSpec(await file.arrayBuffer()), '')).userData
+          .vrmAnimations?.[0];
+        if (!vrmAnimation) throw new Error('VRMAのアニメーションが見つかりません');
+      }
+    } // !cachedEntry（キャッシュがあれば読み込み・変換を省く）
+    let physicsOn = false,
+      physicsNote = '';
+    if (mmdMesh && byId('physics').checked) {
+      setStatus('MMDの物理エンジン（Ammo.js）を読み込み中…');
+      physicsOn = await loadAmmoIfNeeded();
+      if (!physicsOn) physicsNote = '　（Ammo.jsを読み込めず物理なし）';
+    }
+    if (token !== motionLoadToken || (!vrm && !mmdMesh)) return; // 読み込み中に別のモーション／モデルが選ばれた
+    const blendFrom = options.chain ? blendCapture() : null;
+    stopMotion();
+    groundFixLast = '';
+    physicsHoldSec = 0;
+    physicsErrorCount = 0; // 読み込みが済んでから切り替える（リストの連続再生で、つなぎ目にTポーズが一瞬出ないように）
+    if (mmdMesh) {
+      let clip;
+      mmdMesh.pose();
+      if (cachedEntry) {
+        clip = cachedEntry.clip;
+        morphInfo = cachedEntry.mi;
+        groundFixLast = cachedEntry.gf;
+      } else {
+        if (isVmd) morphInfo = fixMorphNames(vmd, mmdMesh);
+        const builtMmdClip = isVmd
+          ? new MMDLoader().animationBuilder.build(vmd, mmdMesh)
+          : vrmaToMMD(vrmAnimation, mmdMesh);
+        clip = isVmd ? groundFixMMDClip(builtMmdClip, mmdMesh) : builtMmdClip;
+        if (cacheKey) putClipCache(cacheMap, cacheKey, {clip, mi: morphInfo, gf: groundFixLast});
+      }
+      mmdHelper = new MMDAnimationHelper({afterglow: 0, sync: false});
+      mmdHelper.add(mmdMesh, {animation: clip, physics: false}); // afterglow/syncはクリップの長さを書き換えて末尾に待ち時間を足す（切り替え・ループで止まる原因）ので使わない
+      mmdHelper.enable('ik', isVmd);
+      setupCurlMMD(clip);
+      const helperObject = mmdHelper.objects.get(mmdMesh);
+      if (physicsOn && helperObject) {
+        try {
+          const physicsInstance = makeMMDPhysics();
+          if (physicsInstance) {
+            mmdHelper._animateMesh(mmdMesh, 0);
+            attachPhysicsToHelper(helperObject, physicsInstance);
+          } else physicsOn = false;
+        } catch (e) {
+          console.warn('物理の作成', e);
+          physicsOn = false;
+          physicsNote = '　（物理の作成に失敗）';
+        }
+      } // 0フレーム目の姿勢にしてから物理をそろえる
+      const helperMixer = mmdHelper.objects.get(mmdMesh)?.mixer;
+      if (helperMixer) attachPlayer(helperMixer, helperMixer.clipAction(clip));
+    } else {
+      let vrmClip;
+      if (cachedEntry) {
+        vrmClip = cachedEntry.clip;
+        groundFixLast = cachedEntry.gf;
+      } else {
+        const builtVrmClip = isVmd ? vmdToVRM(vmd, vrm) : createVRMAnimationClip(vrmAnimation, vrm);
+        vrmClip = isVmd ? builtVrmClip : groundFixVRM(builtVrmClip, vrm);
+        if (cacheKey) putClipCache(cacheMap, cacheKey, {clip: vrmClip, mi: null, gf: groundFixLast});
+      }
+      vrmMixer = new THREE.AnimationMixer(vrm.scene);
+      const action = vrmMixer.clipAction(vrmClip);
+      action.play();
+      setupCurlVRM(vrmClip);
+      attachPlayer(vrmMixer, action);
+    }
+    pendingBlendFrom = blendFrom;
+    setStatus(
+      file.name +
+        ' を再生中（' +
+        (isVmd ? 'VMD' : 'VRMA') +
+        ' → ' +
+        (mmdMesh ? 'MMD' : 'VRM') +
+        '）' +
+        (physicsOn ? '・物理ON' : '') +
+        physicsNote +
+        listProgressLabel() +
+        (groundFixLast ? '　' + groundFixLast : '') +
+        (morphInfo && morphInfo.total
+          ? '　表情 ' +
+            (morphInfo.ok + morphInfo.fixed) +
+            '/' +
+            morphInfo.total +
+            '件を反映' +
+            (morphInfo.fixed ? '（名前補正' + morphInfo.fixed + '）' : '')
+          : '')
+    );
+    if (!options.reapply && !options.noHist) saveToHistory('motion', file, options.hid);
+    else if (!options.reapply) renderHistory();
+    renderList();
+  } catch (err) {
+    console.error(err);
+    currentMotionFile = null;
+    currentHistoryIds.motion = null;
+    renderHistory();
+    setStatus('モーション読込失敗：' + (err?.message || err));
+  }
 }
 // ---- 再生制御：ループ／リスト連続再生 ----
-const loopOn=()=>$('loop').checked;
+// ============================================================================
+// 11. 再生制御・UIイベント・カメラ操作
+// ============================================================================
+/** 「ループ」チェックの状態。 */
+const isLoopEnabled = () => byId('loop').checked;
 // リストの1件が1回再生し終わった時：指定回数に達していなければ同じモーションをもう一度、達していれば次へ
-function onItemEnd(){
-  if(player.done||!playCtx)return;
-  const L=lists.find(l=>l.id===playCtx.listId),it=L&&L.items.find(i=>i.key===playCtx.key),reps=Math.max(1,it?.rep|0||1),a=player.action;
-  if(a&&(playCtx.n||1)<reps){   // 読み込み直さず、そのまま頭から再生し直す（切り替えの待ちも物理のリセットも起きない）
-    playCtx.n=(playCtx.n||1)+1;a.reset();a.play();
-    if(motionFile)status(motionFile.name+' を再生中'+listTag());
+/** リストの1項目が再生し終わった時：回数に達していなければ同じ項目をもう一度、達していれば次へ。 */
+function onItemEnd() {
+  if (playback.done || !listPlayback) return;
+  const list = savedLists.find(l => l.id === listPlayback.listId),
+    item = list && list.items.find(i => i.key === listPlayback.key),
+    reps = Math.max(1, item?.rep | 0 || 1),
+    action = playback.action;
+  if (action && (listPlayback.n || 1) < reps) {
+    // 読み込み直さず、そのまま頭から再生し直す（切り替えの待ちも物理のリセットも起きない）
+    listPlayback.n = (listPlayback.n || 1) + 1;
+    const blendFrom = blendCapture();
+    action.reset();
+    action.play();
+    pendingBlendFrom = blendFrom;
+    if (currentMotionFile) setStatus(currentMotionFile.name + ' を再生中' + listProgressLabel());
     return;
   }
-  player.done=true;playNext();
+  playback.done = true;
+  playNextInList();
 }
-function armPlayer(mx,act){
-  player={mixer:mx,action:act,done:false};
-  mx.addEventListener('finished',()=>{if(player.mixer!==mx||player.done||player.frozen)return;if(playCtx)onItemEnd();else player.done=true;});   // 1回再生が終わった時だけ発火（LoopOnce）
+/** 再生状態(playback)を設定し、終了イベントとループ設定を結びつける。 */
+function attachPlayer(mx, act) {
+  playback = {mixer: mx, action: act, done: false};
+  mx.addEventListener('finished', () => {
+    if (playback.mixer !== mx || playback.done || playback.frozen) return;
+    if (listPlayback) onItemEnd();
+    else playback.done = true;
+  }); // 1回再生が終わった時だけ発火（LoopOnce）
   applyLoop(false);
 }
 // 'finished'が来ない場合（物理の例外・afterglow等）でも次へ進める保険
-function physFail(){   // 例外が続くなら、まず物理を切る。それでも続くなら再生を止める（操作不能を防ぐ）
-  physErr++;
-  if(physErr===5&&helper){try{helper.enable('physics',false);}catch{}$('physics').checked=false;try{localStorage.setItem('mvPhysics','0');}catch{}status('物理が不安定になったためOFFにしました');}
-  else if(physErr>=40){physErr=0;playCtx=null;stopMotion();listRender();status('エラーが続いたため再生を止めました');}
-}
-function checkEnd(){
-  const a=player.action;if(!a||player.done||player.frozen||!playCtx||advancing||a.loop!==THREE.LoopOnce)return;
-  const d=a.getClip().duration;if(d>0&&a.time>=d-1e-4)onItemEnd();
-}
-function applyLoop(restart){
-  const a=player.action;if(!a)return;
-  const L=playCtx&&lists.find(l=>l.id===playCtx.listId);
-  const repeat=loopOn()&&(!L||L.items.length<=1);   // 単体、または1件だけのリストはそのまま繰り返す
-  if(repeat){a.setLoop(THREE.LoopRepeat,Infinity);a.clampWhenFinished=false;}
-  else{a.setLoop(THREE.LoopOnce,1);a.clampWhenFinished=true;}   // 終了後は最後のポーズで止める（座る・立つ・登場など）
-  if(restart&&player.done&&loopOn()){   // 再生が終わった後にループをONにしたら再開
-    player.done=false;
-    if(L&&L.items.length>1)playListFrom(L,L.items[0].key);else{a.reset();a.play();}
+/** 物理の例外が続く時の保険：まず物理を切り、それでも続けば再生を止める。 */
+function handlePhysicsFailure() {
+  // 例外が続くなら、まず物理を切る。それでも続くなら再生を止める（操作不能を防ぐ）
+  physicsErrorCount++;
+  if (physicsErrorCount === 5 && mmdHelper) {
+    try {
+      mmdHelper.enable('physics', false);
+    } catch {}
+    byId('physics').checked = false;
+    try {
+      localStorage.setItem('mvPhysics', '0');
+    } catch {}
+    setStatus('物理が不安定になったためOFFにしました');
+  } else if (physicsErrorCount >= 40) {
+    physicsErrorCount = 0;
+    listPlayback = null;
+    stopMotion();
+    renderList();
+    setStatus('エラーが続いたため再生を止めました');
   }
 }
-$('motionFile').addEventListener('change',e=>{loadMotion(e.target.files?.[0]);e.target.value='';});
-$('hand').addEventListener('input',e=>{$('handText').textContent=(+e.target.value).toFixed(2);});
-for(const [id,f] of [['mgr',v=>v.toFixed(1)],['msole',v=>v.toFixed(1)+'%'],['mhip',v=>v.toFixed(0)+'%']]){   // 接地補正：強さ／足裏の余裕／尻の高さ。補正はクリップ作成時に焼くので、変えたら作り直して再生しなおす
-  $(id).addEventListener('input',e=>{$(id+'Text').textContent=f(+e.target.value);});
-  $(id).addEventListener('change',()=>{if(motionFile)loadMotion(motionFile,{reapply:1});});
+/** 「finished」イベントが来ない場合でも、終端に達したら次へ進める。 */
+function checkMotionEnd() {
+  const action = playback.action;
+  if (
+    !action ||
+    playback.done ||
+    playback.frozen ||
+    !listPlayback ||
+    isAdvancingList ||
+    action.loop !== THREE.LoopOnce
+  )
+    return;
+  const duration = action.getClip().duration;
+  if (duration > 0 && action.time >= duration - 1e-4) onItemEnd();
 }
-$('zoom').addEventListener('input',e=>{zoom=+e.target.value;$('zoomText').textContent=zoom.toFixed(2)+'×';updateCamera();});
-$('autoRotate').onclick=()=>{auto=!auto;$('autoRotate').textContent='自動回転 '+(auto?'ON':'OFF');};
-$('reset').onclick=()=>{yaw=0;pitch=0;zoom=1;pan.set(0,0,0);$('zoom').value='1';$('zoomText').textContent='1.0×';updateCamera();};
-$('home').onclick=()=>{yaw=0;updateCamera();};
+/** ループ設定を再生中のアクションへ反映する（リスト再生は1回ずつ再生して次へ進む）。 */
+function applyLoop(restart) {
+  const action = playback.action;
+  if (!action) return;
+  const list = listPlayback && savedLists.find(l => l.id === listPlayback.listId);
+  const repeat = isLoopEnabled() && (!list || list.items.length <= 1); // 単体、または1件だけのリストはそのまま繰り返す
+  if (repeat) {
+    action.setLoop(THREE.LoopRepeat, Infinity);
+    action.clampWhenFinished = false;
+  } else {
+    action.setLoop(THREE.LoopOnce, 1);
+    action.clampWhenFinished = true;
+  } // 終了後は最後のポーズで止める（座る・立つ・登場など）
+  if (restart && playback.done && isLoopEnabled()) {
+    // 再生が終わった後にループをONにしたら再開
+    playback.done = false;
+    if (list && list.items.length > 1) playListFrom(list, list.items[0].key);
+    else {
+      action.reset();
+      action.play();
+    }
+  }
+}
+byId('motionFile').addEventListener('change', e => {
+  loadMotion(e.target.files?.[0]);
+  e.target.value = '';
+});
+byId('hand').addEventListener('input', e => {
+  byId('handText').textContent = (+e.target.value).toFixed(2);
+});
+for (const [id, f] of [
+  ['mgr', v => v.toFixed(1)],
+  ['msole', v => v.toFixed(1) + '%'],
+  ['mhip', v => v.toFixed(0) + '%']
+]) {
+  // 接地補正：強さ／足裏の余裕／尻の高さ。補正はクリップ作成時に焼くので、変えたら作り直して再生しなおす
+  byId(id).addEventListener('input', e => {
+    byId(id + 'Text').textContent = f(+e.target.value);
+  });
+  byId(id).addEventListener('change', () => {
+    if (currentMotionFile) loadMotion(currentMotionFile, {reapply: 1});
+  });
+}
+byId('zoom').addEventListener('input', e => {
+  zoom = +e.target.value;
+  byId('zoomText').textContent = zoom.toFixed(2) + '×';
+  updateCamera();
+});
+byId('autoRotate').onclick = () => {
+  autoRotate = !autoRotate;
+  byId('autoRotate').textContent = '自動回転 ' + (autoRotate ? 'ON' : 'OFF');
+};
+byId('reset').onclick = () => {
+  yaw = 0;
+  pitch = 0;
+  zoom = 1;
+  panOffset.set(0, 0, 0);
+  byId('zoom').value = '1';
+  byId('zoomText').textContent = '1.0×';
+  updateCamera();
+};
+byId('home').onclick = () => {
+  yaw = 0;
+  updateCamera();
+};
 
-function panBy(dx,dy){   // 画面上の移動量(px)→注視点の平行移動
-  const dist=radius*2.25/zoom,k=2*dist*Math.tan(THREE.MathUtils.degToRad(camera.fov/2))/Math.max(1,canvas.clientHeight);
+/** 画面上の移動量(px)を注視点の平行移動へ変換する。 */
+function panBy(dx, dy) {
+  // 画面上の移動量(px)→注視点の平行移動
+  const dist = (cameraRadius * 2.25) / zoom,
+    pixelToWorld =
+      (2 * dist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / Math.max(1, canvas.clientHeight);
   camera.updateMatrixWorld();
-  const right=new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld,0),up=new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld,1);
-  pan.addScaledVector(right,-dx*k).addScaledVector(up,dy*k);updateCamera();
+  const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0),
+    up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+  panOffset.addScaledVector(right, -dx * pixelToWorld).addScaledVector(up, dy * pixelToWorld);
+  updateCamera();
 }
 // ---- PC操作：ホイール＝ズーム、右/中ドラッグ・Shift+ドラッグ＝移動 ----
-canvas.addEventListener('wheel',e=>{e.preventDefault();const d=e.deltaMode===1?e.deltaY*33:e.deltaY;
-  zoom=THREE.MathUtils.clamp(zoom*Math.exp(-d*.0015),.5,3.5);$('zoom').value=zoom;$('zoomText').textContent=zoom.toFixed(2)+'×';updateCamera();},{passive:false});
-canvas.addEventListener('contextmenu',e=>e.preventDefault());
-document.addEventListener('contextmenu',e=>{if(!e.target.closest('input,#status'))e.preventDefault();});
-if(matchMedia('(pointer:fine)').matches)$('hint').textContent='ドラッグ：回転 ／ 右ドラッグ・Shift+ドラッグ：移動 ／ ホイール：拡大縮小 ／ クリック：表情変更';
-const pointers=new Map();let pinchStart=0,pinchZoom=1;
-const point=e=>({x:e.clientX,y:e.clientY});
-canvas.addEventListener('pointerdown',e=>{
-  canvas.setPointerCapture(e.pointerId);pointers.set(e.pointerId,point(e));
-  if(pointers.size===1){drag=true;lastX=downX=e.clientX;lastY=downY=e.clientY;moved=0;
-    panMode=e.pointerType==='mouse'&&(e.button!==0||e.shiftKey);if(panMode)moved=999;}
-  if(pointers.size===2){const a=[...pointers.values()];pinchStart=Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y);pinchZoom=zoom;drag=false;moved=999;lastMid={x:(a[0].x+a[1].x)/2,y:(a[0].y+a[1].y)/2};}
+canvas.addEventListener(
+  'wheel',
+  e => {
+    e.preventDefault();
+    const d = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+    zoom = THREE.MathUtils.clamp(zoom * Math.exp(-d * 0.0015), 0.5, 3.5);
+    byId('zoom').value = zoom;
+    byId('zoomText').textContent = zoom.toFixed(2) + '×';
+    updateCamera();
+  },
+  {passive: false}
+);
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('contextmenu', e => {
+  if (!e.target.closest('input,#status')) e.preventDefault();
 });
-canvas.addEventListener('pointermove',e=>{
-  if(!pointers.has(e.pointerId))return;pointers.set(e.pointerId,point(e));
-  if(pointers.size>=2){const a=[...pointers.values()],d=Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y);
-    const mid={x:(a[0].x+a[1].x)/2,y:(a[0].y+a[1].y)/2};
-    if(lastMid){   // 2本指の中点の移動 → 平行移動（画面の右・上方向）
-      const dist=radius*2.25/zoom,k=2*dist*Math.tan(THREE.MathUtils.degToRad(camera.fov/2))/Math.max(1,canvas.clientHeight);
+if (matchMedia('(pointer:fine)').matches)
+  byId('hint').textContent =
+    'ドラッグ：回転 ／ 右ドラッグ・Shift+ドラッグ：移動 ／ ホイール：拡大縮小 ／ クリック：表情変更';
+const pointers = new Map();
+let pinchStart = 0,
+  pinchZoom = 1;
+/** ポインターイベントから画面座標 {x, y} を取り出す。 */
+const pointerPosition = e => ({x: e.clientX, y: e.clientY});
+canvas.addEventListener('pointerdown', e => {
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, pointerPosition(e));
+  if (pointers.size === 1) {
+    isRotateDragging = true;
+    lastPointerX = dragStartX = e.clientX;
+    lastPointerY = dragStartY = e.clientY;
+    dragDistance = 0;
+    isPanDrag = e.pointerType === 'mouse' && (e.button !== 0 || e.shiftKey);
+    if (isPanDrag) dragDistance = 999;
+  }
+  if (pointers.size === 2) {
+    const a = [...pointers.values()];
+    pinchStart = Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y);
+    pinchZoom = zoom;
+    isRotateDragging = false;
+    dragDistance = 999;
+    lastPinchMidpoint = {x: (a[0].x + a[1].x) / 2, y: (a[0].y + a[1].y) / 2};
+  }
+});
+canvas.addEventListener('pointermove', e => {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId, pointerPosition(e));
+  if (pointers.size >= 2) {
+    const a = [...pointers.values()],
+      d = Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y);
+    const mid = {x: (a[0].x + a[1].x) / 2, y: (a[0].y + a[1].y) / 2};
+    if (lastPinchMidpoint) {
+      // 2本指の中点の移動 → 平行移動（画面の右・上方向）
+      const dist = (cameraRadius * 2.25) / zoom,
+        k =
+          (2 * dist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / Math.max(1, canvas.clientHeight);
       camera.updateMatrixWorld();
-      const right=new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld,0),up=new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld,1);
-      pan.addScaledVector(right,-(mid.x-lastMid.x)*k).addScaledVector(up,(mid.y-lastMid.y)*k);}
-    lastMid=mid;
-    if(pinchStart>0){zoom=THREE.MathUtils.clamp(pinchZoom*d/pinchStart,.5,3.5);$('zoom').value=zoom;$('zoomText').textContent=zoom.toFixed(2)+'×';updateCamera();}return;}
-  if(drag&&panMode){panBy(e.clientX-lastX,e.clientY-lastY);lastX=e.clientX;lastY=e.clientY;return;}
-  if(drag){const dx=e.clientX-lastX,dy=e.clientY-lastY;moved+=Math.abs(dx)+Math.abs(dy);
-    yaw-=dx*.008;pitch=THREE.MathUtils.clamp(pitch+dy*.006,-1.25,1.25);lastX=e.clientX;lastY=e.clientY;updateCamera();}
+      const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0),
+        up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+      panOffset
+        .addScaledVector(right, -(mid.x - lastPinchMidpoint.x) * k)
+        .addScaledVector(up, (mid.y - lastPinchMidpoint.y) * k);
+    }
+    lastPinchMidpoint = mid;
+    if (pinchStart > 0) {
+      zoom = THREE.MathUtils.clamp((pinchZoom * d) / pinchStart, 0.5, 3.5);
+      byId('zoom').value = zoom;
+      byId('zoomText').textContent = zoom.toFixed(2) + '×';
+      updateCamera();
+    }
+    return;
+  }
+  if (isRotateDragging && isPanDrag) {
+    panBy(e.clientX - lastPointerX, e.clientY - lastPointerY);
+    lastPointerX = e.clientX;
+    lastPointerY = e.clientY;
+    return;
+  }
+  if (isRotateDragging) {
+    const dx = e.clientX - lastPointerX,
+      dy = e.clientY - lastPointerY;
+    dragDistance += Math.abs(dx) + Math.abs(dy);
+    yaw -= dx * 0.008;
+    pitch = THREE.MathUtils.clamp(pitch + dy * 0.006, -1.25, 1.25);
+    lastPointerX = e.clientX;
+    lastPointerY = e.clientY;
+    updateCamera();
+  }
 });
-function pointerEnd(e){
+/** ポインターの終了：移動が小さければタップとして表情を切り替える。 */
+function pointerEnd(e) {
   pointers.delete(e.pointerId);
-  if(pointers.size===0){drag=false;panMode=false;pinchStart=0;lastMid=null;if(moved<12)cycleExpression();}
-  else if(pointers.size===1){const p=[...pointers.values()][0];lastX=p.x;lastY=p.y;drag=true;}
+  if (pointers.size === 0) {
+    isRotateDragging = false;
+    isPanDrag = false;
+    pinchStart = 0;
+    lastPinchMidpoint = null;
+    if (dragDistance < 12) cycleExpression();
+  } else if (pointers.size === 1) {
+    const p = [...pointers.values()][0];
+    lastPointerX = p.x;
+    lastPointerY = p.y;
+    isRotateDragging = true;
+  }
 }
-canvas.addEventListener('pointerup',pointerEnd);canvas.addEventListener('pointercancel',pointerEnd);
-function cycleExpression(){
-  const vr=!!vrm?.expressionManager;if(!vr&&!morphList.length)return;
-  const names=['neutral','happy','surprised','sad','angry','relaxed'].filter(k=>vr||k==='neutral'||presetMorph(k)),n=names[(names.indexOf(currentExp)+1)%names.length];
-  setExpression(n);status('タップ：'+($('expr').querySelector(`[data-exp="${n}"]`)?.textContent||n));
+canvas.addEventListener('pointerup', pointerEnd);
+canvas.addEventListener('pointercancel', pointerEnd);
+/** タップで表情を順番に切り替える。 */
+function cycleExpression() {
+  const vr = !!vrm?.expressionManager;
+  if (!vr && !morphList.length) return;
+  const names = ['neutral', 'happy', 'surprised', 'sad', 'angry', 'relaxed'].filter(
+      k => vr || k === 'neutral' || findMorphForPreset(k)
+    ),
+    n = names[(names.indexOf(currentExpressionName) + 1) % names.length];
+  setExpression(n);
+  setStatus('タップ：' + (byId('expr').querySelector(`[data-exp="${n}"]`)?.textContent || n));
 }
-function animate(){
-  requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.05);
-  if(auto&&activeObject){yaw+=dt*.35;updateCamera();}
-  mixer?.update(dt);if(!helper)applyCurl(dt);vrm?.update(dt);   // VRM：モーション更新→指の曲げ→vrm.update
-  if(helper){try{helper.update(dt);physErr=0;}catch(e){console.warn(e);physFail();}applyCurl(dt);}   // MMD：helper.update が骨を巻き戻すので、曲げは更新の後に入れる
-  if(physHold>0)physHold-=dt;
-  checkEnd();
-  renderer.render(scene,camera);
+/** 毎フレームの更新と描画（モーション→指の曲げ→VRM更新／MMD helper更新→つなぎ補間→描画）。 */
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if (autoRotate && loadedObject) {
+    yaw += dt * 0.35;
+    updateCamera();
+  }
+  releaseGaze(); // 前フレームの視線補正を戻す
+  vrmMixer?.update(dt);
+  if (!mmdHelper) {
+    blendStep(dt);
+    applyCurl(dt);
+  }
+  if (vrm) applyGazeVrm(dt); // 視線（顔の向き）はモーション・指の曲げの後、vrm.update の前
+  vrm?.update(dt); // VRM：モーション更新→指の曲げ→vrm.update
+  if (mmdHelper) {
+    try {
+      mmdHelper.update(dt);
+      physicsErrorCount = 0;
+    } catch (e) {
+      console.warn(e);
+      handlePhysicsFailure();
+    }
+    blendStep(dt);
+    applyCurl(dt);
+    applyGazeMmd(dt);
+  } // MMD：helper.update が骨を巻き戻すので、曲げ・視線は更新の後に入れる
+  if (physicsHoldSec > 0) physicsHoldSec -= dt;
+  checkMotionEnd();
+  renderer.render(scene, camera);
 }
 // ---- メニューの縦置き／横置き＋ドラッグでサイズ変更 ----
-const clampN=(x,a,b)=>Math.max(a,Math.min(b,x));
-function layout(){
-  const p=$('panel'),v=$('view'),h=$('hint'),hd=document.querySelector('header');
-  if(dock==='v'){const w=p.offsetWidth;v.style.inset='0 '+w+'px 0 0';hd.style.right=(w+10)+'px';h.style.right=w+'px';h.style.bottom='12px';}
-  else{const ph=p.offsetHeight;v.style.inset='0 0 '+ph+'px 0';hd.style.right='10px';h.style.right='0';h.style.bottom=(ph+8)+'px';}
+// ============================================================================
+// 12. パネルの縦横配置・起動処理
+// ============================================================================
+/** 数値を a〜b の範囲に収める。 */
+const clampNumber = (x, a, b) => Math.max(a, Math.min(b, x));
+/** 操作パネルの大きさに合わせて表示領域・ヒント・ヘッダーの位置を調整する。 */
+function layoutPanel() {
+  const panel = byId('panel'),
+    viewEl = byId('view'),
+    hintEl = byId('hint'),
+    headerEl = document.querySelector('header');
+  if (dockMode === 'v') {
+    const panelWidth = panel.offsetWidth;
+    viewEl.style.inset = '0 ' + panelWidth + 'px 0 0';
+    headerEl.style.right = panelWidth + 10 + 'px';
+    hintEl.style.right = panelWidth + 'px';
+    hintEl.style.bottom = '12px';
+  } else {
+    const panelHeight = panel.offsetHeight;
+    viewEl.style.inset = '0 0 ' + panelHeight + 'px 0';
+    headerEl.style.right = '10px';
+    hintEl.style.right = '0';
+    hintEl.style.bottom = panelHeight + 8 + 'px';
+  }
 }
-function applyDock(){
-  const p=$('panel');document.body.classList.toggle('dv',dock==='v');
-  p.style.height='';p.style.width='';p.style.maxHeight='';
-  let sz=0;try{sz=+localStorage.getItem(dock==='v'?'mvDockW':'mvDockH')||0;}catch{}
-  if(dock==='v')p.style.width=Math.round(clampN(sz||innerWidth*.38,220,Math.min(innerWidth*.85,Math.max(260,sz||420))))+'px';
-  else if(sz){p.style.height=clampN(sz,120,innerHeight*.85)+'px';p.style.maxHeight='85vh';}
-  $('dock').textContent=dock==='v'?'横置きへ':'縦置きへ';layout();
+/** パネルの縦置き/横置きと保存済みサイズを反映する。 */
+function applyDock() {
+  const panel = byId('panel');
+  document.body.classList.toggle('dv', dockMode === 'v');
+  panel.style.height = '';
+  panel.style.width = '';
+  panel.style.maxHeight = '';
+  let savedSize = 0;
+  try {
+    savedSize = +localStorage.getItem(dockMode === 'v' ? 'mvDockW' : 'mvDockH') || 0;
+  } catch {}
+  if (dockMode === 'v')
+    panel.style.width =
+      Math.round(
+        clampNumber(
+          savedSize || innerWidth * 0.38,
+          220,
+          Math.min(innerWidth * 0.85, Math.max(260, savedSize || 420))
+        )
+      ) + 'px';
+  else if (savedSize) {
+    panel.style.height = clampNumber(savedSize, 120, innerHeight * 0.85) + 'px';
+    panel.style.maxHeight = '85vh';
+  }
+  byId('dock').textContent = dockMode === 'v' ? '横置きへ' : '縦置きへ';
+  layoutPanel();
 }
-try{dock=localStorage.getItem('mvDock')==='v'?'v':'h';}catch{}
-$('dock').onclick=()=>{dock=dock==='v'?'h':'v';try{localStorage.setItem('mvDock',dock);}catch{}applyDock();};
-new ResizeObserver(layout).observe($('panel'));
-(()=>{const g=$('pgrip');let d=null;
-  g.addEventListener('pointerdown',e=>{d={id:e.pointerId,v:0};g.setPointerCapture(e.pointerId);e.preventDefault();});
-  g.addEventListener('pointermove',e=>{if(!d||e.pointerId!==d.id)return;const p=$('panel');
-    if(dock==='v'){const w=clampN(innerWidth-e.clientX,220,innerWidth*.85);p.style.width=w+'px';d.v=w;}
-    else{const h=clampN(innerHeight-e.clientY,120,innerHeight*.85);p.style.height=h+'px';p.style.maxHeight='85vh';d.v=h;}
-    layout();});
-  const end=e=>{if(!d)return;if(d.v)try{localStorage.setItem(dock==='v'?'mvDockW':'mvDockH',String(Math.round(d.v)));}catch{}d=null;};
-  g.addEventListener('pointerup',end);g.addEventListener('pointercancel',end);
+try {
+  dockMode = localStorage.getItem('mvDock') === 'v' ? 'v' : 'h';
+} catch {}
+byId('dock').onclick = () => {
+  dockMode = dockMode === 'v' ? 'h' : 'v';
+  try {
+    localStorage.setItem('mvDock', dockMode);
+  } catch {}
+  applyDock();
+};
+new ResizeObserver(layoutPanel).observe(byId('panel'));
+(() => {
+  const g = byId('pgrip');
+  let d = null;
+  g.addEventListener('pointerdown', e => {
+    d = {id: e.pointerId, v: 0};
+    g.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  g.addEventListener('pointermove', e => {
+    if (!d || e.pointerId !== d.id) return;
+    const p = byId('panel');
+    if (dockMode === 'v') {
+      const w = clampNumber(innerWidth - e.clientX, 220, innerWidth * 0.85);
+      p.style.width = w + 'px';
+      d.v = w;
+    } else {
+      const h = clampNumber(innerHeight - e.clientY, 120, innerHeight * 0.85);
+      p.style.height = h + 'px';
+      p.style.maxHeight = '85vh';
+      d.v = h;
+    }
+    layoutPanel();
+  });
+  const end = e => {
+    if (!d) return;
+    if (d.v)
+      try {
+        localStorage.setItem(dockMode === 'v' ? 'mvDockW' : 'mvDockH', String(Math.round(d.v)));
+      } catch {}
+    d = null;
+  };
+  g.addEventListener('pointerup', end);
+  g.addEventListener('pointercancel', end);
 })();
+/** 起動時に、最後に使ったモデル（履歴で最終使用が最新のもの）を自動で開く。「起動時に復帰」がOFFなら何もしない。 */
+async function restoreLastModel() {
+  if (!byId('restore').checked) return;
+  try {
+    const last = (await historyGetAll()).filter(m => m.kind === 'model').sort((a, b) => b.time - a.time)[0];
+    if (!last) return;
+    setStatus('前回のモデルを開いています…');
+    await loadModelFile(await historyGetFile(last.id), last.id);
+  } catch (e) {
+    console.warn('前回のモデルを復帰できませんでした', e);
+    setStatus('前回のモデルを復帰できませんでした');
+  }
+}
 applyDock();
-histRender();
-lInit();
+renderHistory();
+initLists();
+restoreLastModel();
 animate();
 </script></body></html>
