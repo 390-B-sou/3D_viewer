@@ -2503,8 +2503,8 @@ console.info('3D Model Viewer v' + APP_VERSION + ' (build ' + BUILD_DATE + ')');
 // 差が大きすぎる（enter/exitのようにかけ離れた）場合は補間しない。しきい値は下の定数で調整。
 const BLEND_TOP_DEG = 60,
   BLEND_MAX_DEG = 120,
-  BLEND_MIN_SEC = 0.2,
-  BLEND_MAX_SEC = 0.6;
+  BLEND_MIN_SEC = 0.02,
+  BLEND_MAX_SEC = 0.02;
 const blendTmpQuat = new THREE.Quaternion(),
   blendTmpPos = new THREE.Vector3();
 /** つなぎ補間の対象ボーン一覧を返す。 */
