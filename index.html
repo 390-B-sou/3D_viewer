@@ -148,8 +148,9 @@ input[type=search]{-webkit-user-select:text;user-select:text}
   </div>
   <div class="row"><b>背景</b>
     <div id="bgPresets">
-      <button data-bg="#101116">ダーク</button><button data-bg="#3a3d46">グレー</button><button data-bg="#ffffff">白</button><button data-bg="#00b140">グリーン</button><button data-bg="#0047bb">ブルー</button><button id="mugBtn" title="おまけ：身長チャート背景＋ボードを持つポーズ">マグショット</button><input id="mugText" type="text" maxlength="60" value="Viewing Made Easy &amp; Fun!" placeholder="ボードの文字" title="マグショットのボードの文字">
+      <button data-bg="#101116">ダーク</button><button data-bg="#3a3d46">グレー</button><button data-bg="#ffffff">白</button><button data-bg="#00b140">グリーン</button><button data-bg="#0047bb">ブルー</button><button id="mugBtn" title="おまけ：身長チャート背景＋ボードを持つポーズ">マグショット</button><input id="mugText" type="text" maxlength="60" value="Viewing Made Easy &amp; Fun!" placeholder="ボードの文字（&n &day &week &time &year）" title="マグショットのボードの文字">
     </div>
+    <div class="muted" style="flex-basis:100%;font-size:11px">ボードの文字：&amp;n 改行 / &amp;day 月/日 / &amp;week 曜日 / &amp;time 時刻 / &amp;year 年</div>
     <input id="bgColor" type="color" value="#101116" title="好きな色">
     <label class="pick chk"><input type="checkbox" id="floorOn" checked><span>床</span></label>
   </div>
@@ -1296,6 +1297,21 @@ function mugWrap(g, text, maxW) {
   return out;
 }
 /** ボードの文字テクスチャを描き直す（入力欄の文字を反映）。 */
+/** ボード文字の置換：&n=改行, &day=月/日, &week=曜日(英3文字), &time=hh:mm, &year=西暦。 */
+function mugExpand(t) {
+  const d = new Date(),
+    p2 = n => String(n).padStart(2, '0');
+  return t.replace(/&(day|week|time|year|n)/g, (_, k) =>
+    k === 'n' ? '\n'
+    : k === 'day' ? d.getMonth() + 1 + '/' + d.getDate()
+    : k === 'week' ? ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()]
+    : k === 'time' ? p2(d.getHours()) + ':' + p2(d.getMinutes())
+    : String(d.getFullYear()));
+}
+/** ボードに出す内容の識別子（変わったら描き直す）。 */
+function mugBoardSig() {
+  return (currentModelFile ? currentModelFile.name : '') + '\n' + mugExpand((byId('mugText').value || '').trim());
+}
 function mugDrawBoard() {
   if (!mug.boardCv) {
     mug.boardCv = document.createElement('canvas');
@@ -1317,21 +1333,44 @@ function mugDrawBoard() {
   g.textBaseline = 'middle';
   g.font = 'bold 42px ' + FONT;
   g.fillText('3D Model Viewer v' + APP_VERSION, W / 2, 52);
-  const text = (byId('mugText').value || '').trim(),
+  const text = mugExpand((byId('mugText').value || '').trim()),
     areaTop = 96,
     areaH = 210;
   let size = 112,
     lines = [];
-  for (; size >= 28; size -= 4) {
-    g.font = 'bold ' + size + 'px ' + FONT;
-    lines = mugWrap(g, text, W - 80);
-    if (lines.length * size * 1.15 <= areaH) break;
+  const maxW = W - 80,
+    manual = text.includes('\n'); // &n があれば自動折り返しはしない
+  if (manual) {
+    const ls = text.split('\n').map(l => l.trim());
+    for (; size >= 20; size -= 4) {
+      g.font = 'bold ' + size + 'px ' + FONT;
+      if (ls.length * size * 1.15 <= areaH && ls.every(l => g.measureText(l).width <= maxW)) break;
+    }
+    lines = ls;
+  } else {
+    // まず1行のまま縮めて収める（約半分の大きさまで）。それでも入らなければ折り返し
+    let fit = false;
+    for (; size >= 56; size -= 4) {
+      g.font = 'bold ' + size + 'px ' + FONT;
+      if (g.measureText(text).width <= maxW) {
+        fit = true;
+        break;
+      }
+    }
+    if (fit) lines = [text];
+    else {
+      for (size = 112; size >= 28; size -= 4) {
+        g.font = 'bold ' + size + 'px ' + FONT;
+        lines = mugWrap(g, text, maxW);
+        if (lines.length * size * 1.15 <= areaH) break;
+      }
+    }
   }
   const lh = size * 1.15,
     y0 = areaTop + areaH / 2 - ((lines.length - 1) * lh) / 2;
   lines.forEach((l, i) => g.fillText(l, W / 2, y0 + i * lh));
   const fname = currentModelFile ? currentModelFile.name : '';
-  mug.boardName = fname;
+  mug.boardSig = mugBoardSig();
   let fs = 40;
   for (; fs > 18; fs -= 2) {
     g.font = 'bold ' + fs + 'px ' + FONT;
@@ -1441,7 +1480,7 @@ function mugTick() {
   const modelH = Math.max(cameraTargetY / 0.48, 0.1),
     b = mug.board;
   b.visible = !!(vrm || mmdMesh); // ポーズが効くのはVRM/MMDだけ
-  if ((currentModelFile ? currentModelFile.name : '') !== mug.boardName) mugDrawBoard(); // モデルが変わったらファイル名を描き直す
+  if (mugBoardSig() !== mug.boardSig) mugDrawBoard(); // モデル・日時（分）が変わったら描き直す
   let k = 1; // 手首の間隔に合わせてボード幅を調整（標準の0.85〜1.25倍に制限）
   const hasHands = mugHandMid(mugMid);
   if (hasHands) k = Math.min(1.25, Math.max(0.85, (mugTmpA.distanceTo(mugTmpB) * 0.98) / (0.22 * modelH)));
