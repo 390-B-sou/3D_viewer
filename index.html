@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  3D Model Viewer v1.00 / build 2026-10-19
+  3D Model Viewer v1.00 / build 2026-11-02
   ブラウザー上で 3D モデルを表示し、モーション(VRMA/VMD)を再生・変換・保存する単一HTMLアプリ。
   対応モデル：GLB / VRM / MMD(PMX・PMD, ZIP可) / FBX / OBJ
   使用モジュール：three 0.160.0, @pixiv/three-vrm 3.0.0, @pixiv/three-vrm-animation 3.0.0, fflate 0.8.2
@@ -29,8 +29,11 @@ button:disabled{opacity:.4}
 .primary{background:#244a49;border-color:#39716b}
 input[type=file]{display:none}
 .muted{font-size:12px;color:#aeb6c5;line-height:1.45}
-#expr{display:flex;gap:6px;flex-wrap:wrap}
-#expr button{padding:8px 10px;min-height:36px}
+#expr,#bgPresets{display:flex;gap:6px;flex-wrap:wrap}
+#expr button,#bgPresets button{padding:8px 10px;min-height:36px}
+#mugBtn.on{background:#2b5c58;border-color:#4fa89f;color:#fff}
+#mugText{width:12em;max-width:100%;min-height:36px;padding:6px 8px;box-sizing:border-box}
+#bgColor{width:44px;height:36px;padding:2px;border:1px solid var(--line);border-radius:8px;background:#262a35;cursor:pointer}
 input[type=range]{width:100%;accent-color:var(--accent)}
 .rangebox{flex:1;min-width:140px;color:#bfc7d4;font-size:12px}
 #hint{position:absolute;left:0;right:0;bottom:205px;text-align:center;color:#cbd0d9;font-size:12px;pointer-events:none;text-shadow:0 1px 5px #000}
@@ -49,8 +52,8 @@ details#hist{margin-bottom:8px;border:1px solid var(--line);border-radius:11px;b
 .lrepb{flex:none;min-width:48px;min-height:36px;padding:7px 8px;text-align:center;color:#9fe3d8;font-variant-numeric:tabular-nums}
 .hitem.on .hsel{background:#244a49;border-color:#39716b}
 
-details#plist,details#morphBox{margin-bottom:8px;border:1px solid var(--line);border-radius:11px;background:#1a1d26}
-#plist summary,#morphBox summary{padding:9px 12px;cursor:pointer;font-size:13px;color:#cfd6e2}
+details#plist,details#morphBox,details#groundBox,details#viewBox{margin-bottom:8px;border:1px solid var(--line);border-radius:11px;background:#1a1d26}
+#plist summary,#morphBox summary,#groundBox summary,#viewBox summary{padding:9px 12px;cursor:pointer;font-size:13px;color:#cfd6e2}
 .lbody{padding:0 8px 8px}
 .lhead{display:flex;gap:6px;align-items:center;margin-bottom:6px}
 select{flex:1;min-width:0;background:#262a35;color:#f4f5f8;border:1px solid var(--line);border-radius:11px;padding:8px 10px;font:inherit;min-height:38px}
@@ -66,6 +69,16 @@ select{flex:1;min-width:0;background:#262a35;color:#f4f5f8;border:1px solid var(
 .chk input{width:18px;height:18px;margin:0;accent-color:var(--accent)}
 #popup{position:fixed;z-index:60;display:flex;flex-direction:column;gap:5px;min-width:210px;max-width:min(92vw,380px);max-height:60vh;overflow:auto;padding:8px;border:1px solid var(--line);border-radius:14px;background:#1a1d26f8;box-shadow:0 8px 30px #000b}
 #popup[hidden]{display:none}
+#vrmDlg{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.6);padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+#vrmDlg .box{width:min(94vw,460px);max-height:88vh;overflow:auto;padding:12px;border:1px solid var(--line);border-radius:12px;background:#1a1d26;display:flex;flex-direction:column;gap:7px}
+#vrmDlg label{display:flex;gap:6px;align-items:center;font-size:13px}
+#vrmDlg label>span{flex:0 0 9.5em}
+#vrmDlg input,#vrmDlg select{flex:1;min-width:0;max-width:100%;min-height:34px;padding:4px 6px;border:1px solid var(--line);border-radius:8px;background:#101116;color:#f3f4f6;font:inherit}
+#vrmDlg .bad{border-color:#e66}
+#vrmDlg .msg{color:#ffb4b4;font-size:12px;white-space:pre-wrap}
+#vrmDlg .note{color:#9aa3b2;font-size:12px}
+#vrmDlg .btns{display:flex;gap:8px;justify-content:flex-end}
+#vrmDlg summary{padding:6px 0;cursor:pointer;font-size:13px;color:#cfd6e2}
 #popup button{text-align:left}
 #pgrip{flex:none;display:flex;align-items:center;justify-content:center;touch-action:none;cursor:ns-resize;height:20px;width:100%;user-select:none;-webkit-user-select:none}
 #pgrip::after{content:"";width:44px;height:4px;border-radius:2px;background:#ffffff40}
@@ -86,9 +99,10 @@ input[type=search]{-webkit-user-select:text;user-select:text}
 <div id="view"><canvas id="c"></canvas></div>
 <header><div class="brand">◈ 3D Model Viewer <span id="ver" style="font-weight:400;font-size:11px;color:#8f99ab"></span></div><div id="status">モデルを選択してください</div></header>
 <div id="hint">ドラッグ：回転 ／ 2本指スワイプ：移動 ／ ピンチ：拡大・縮小 ／ タップ：表情変更</div>
-<!-- ===== 操作パネル：ファイル選択・リスト・履歴・拡大率/接地補正・表情・モーフ ===== -->
+<!-- ===== 操作パネル：ファイル選択・表情・モーフ・リスト・履歴・表示（拡大率/指の曲げ/背景/床）・接地設定 ===== -->
 <section id="panel"><div id="pgrip" title="ドラッグでサイズ変更"></div><div id="pbody">
   <div class="row">
+    <button id="save">保存</button>
     <label class="pick primary">モデルを開く<input id="modelFile" type="file"></label>
     <label class="pick">モーションを開く<input id="motionFile" type="file"></label>
     <label class="pick chk"><input type="checkbox" id="loop" checked><span>ループ</span></label>
@@ -96,9 +110,19 @@ input[type=search]{-webkit-user-select:text;user-select:text}
     <label class="pick chk"><input type="checkbox" id="gaze"><span>視線</span></label>
     <label class="pick chk"><input type="checkbox" id="restore" checked><span>起動時に復帰</span></label>
     <button id="reset">視点リセット</button>
-    <button id="save">保存</button>
+    <button id="autoRotate">自動回転 OFF</button>
     <button id="dock">縦置きへ</button>
   </div>
+  <div class="row"><b>表情</b>
+    <div id="expr">
+      <button data-exp="neutral">通常</button><button data-exp="happy">笑顔</button><button data-exp="angry">怒り</button>
+      <button data-exp="sad">悲しい</button><button data-exp="relaxed">リラックス</button><button data-exp="surprised">驚き</button>
+    </div>
+  </div>
+  <details id="morphBox"><summary id="morphSum">表情・モーフ（0）</summary>
+    <div class="lbody"><div class="lhead"><input id="morphQ" type="search" placeholder="名前で絞り込み"><button id="morphReset">全て0に</button></div>
+    <div id="morphList"></div></div>
+  </details>
   <details id="plist" open><summary id="listSum">リスト：新規リスト</summary>
     <div class="lbody">
       <div class="lhead">
@@ -117,30 +141,31 @@ input[type=search]{-webkit-user-select:text;user-select:text}
     </div>
     <div class="row" style="padding:0 8px"><span id="hinfo" class="muted"></span><button id="hClear" style="min-height:32px;padding:5px 10px">履歴を全削除</button></div>
   </details>
+  <details id="viewBox"><summary>表示</summary>
   <div class="row">
     <div class="rangebox">拡大率 <span id="zoomText">1.0×</span><input id="zoom" type="range" min="0.5" max="3.5" step="0.05" value="1"></div>
     <div class="rangebox">指の曲げ <span id="handText">1.25</span><input id="hand" type="range" min="0" max="2.5" step="0.05" value="1.25"></div>
-    <button id="autoRotate">自動回転 OFF</button><button id="home">正面</button>
   </div>
+  <div class="row"><b>背景</b>
+    <div id="bgPresets">
+      <button data-bg="#101116">ダーク</button><button data-bg="#3a3d46">グレー</button><button data-bg="#ffffff">白</button><button data-bg="#00b140">グリーン</button><button data-bg="#0047bb">ブルー</button><button id="mugBtn" title="おまけ：身長チャート背景＋ボードを持つポーズ">マグショット</button><input id="mugText" type="text" maxlength="60" value="Viewing Made Easy &amp; Fun!" placeholder="ボードの文字" title="マグショットのボードの文字">
+    </div>
+    <input id="bgColor" type="color" value="#101116" title="好きな色">
+    <label class="pick chk"><input type="checkbox" id="floorOn" checked><span>床</span></label>
+  </div>
+  </details>
+  <details id="groundBox"><summary>接地設定</summary>
   <div class="row">
     <div class="rangebox">接地 <span id="mgrText">1.0</span><input id="mgr" type="range" min="0" max="2" step="0.1" value="1"></div>
     <div class="rangebox">足裏 <span id="msoleText">0.0%</span><input id="msole" type="range" min="-5" max="10" step="0.5" value="0"></div>
     <div class="rangebox">尻 <span id="mhipText">10%</span><input id="mhip" type="range" min="0" max="25" step="1" value="10"></div>
   </div>
-  <div class="row"><b>表情</b>
-    <div id="expr">
-      <button data-exp="neutral">通常</button><button data-exp="happy">笑顔</button><button data-exp="angry">怒り</button>
-      <button data-exp="sad">悲しい</button><button data-exp="relaxed">リラックス</button><button data-exp="surprised">驚き</button>
-    </div>
-  </div>
-  <details id="morphBox"><summary id="morphSum">表情・モーフ（0）</summary>
-    <div class="lbody"><div class="lhead"><input id="morphQ" type="search" placeholder="名前で絞り込み"><button id="morphReset">全て0に</button></div>
-    <div id="morphList"></div></div>
   </details>
   <div class="muted">
     対応：GLB / VRM / MMDモデル（PMX・PMDを含むZIP）。モーション：VRMA・VMD（モデルの種類に関係なく適用）。
     モデルは読み込み直後、そのモデル本来のポーズ（T/Aポーズ）で表示します。VMD→VRMは足IKを2ボーンIKで近似します（接地や足先の細かな動きは元と差が出ます）。
-    外部ライブラリの読み込みにインターネット接続が必要です。モデルとモーションは独立して読み込めます（モデルを替えても選択中のモーションを再適用）。履歴はこのブラウザ内（IndexedDB）に各10件まで保存されます。リストは履歴とは別に保存され、10件を超えても消えません。「ループ」ON：単体は繰り返し、リストは最後まで再生したら最初に戻ります（OFFは1回だけ再生して最後のポーズで止まります）。保存：VRM/GLBはそのまま、VRMAもそのまま、VMDはVRMモデル読込中ならVRMAに変換、MMD/FBX/OBJはGLBに変換して書き出します。
+    外部ライブラリの読み込みにインターネット接続が必要です。モデルとモーションは独立して読み込めます（モデルを替えても選択中のモーションを再適用）。履歴はこのブラウザ内（IndexedDB）に各10件まで保存されます。リストは履歴とは別に保存され、10件を超えても消えません。
+    おまけ：背景の「マグショット」で、身長チャートの背景とボードを持つポーズになります（もう一度押すと元に戻ります）。「ループ」ON：単体は繰り返し、リストは最後まで再生したら最初に戻ります（OFFは1回だけ再生して最後のポーズで止まります）。保存：モデルはGLB／VRM／MMDを選べます（VRM→GLBは拡張を外すだけ、GLB・MMD・FBX→VRMはボーンを自動で割り当て、確認画面で直せます。VRM・GLB・FBX→MMDはPMXのZIPに変換します。揺れ物・物理は引き継がれません）。モーションはVRMA／VMDを選べます（VMD→VRMAはVRMモデルが必要。VRMA→VMDはモデル不要で、足はFK・足IKはオフで書き出します）。
   </div>
 </div></section>
 <div id="popup" hidden></div>
@@ -171,7 +196,7 @@ input[type=search]{-webkit-user-select:text;user-select:text}
  *                                        ・libs/ammo.wasm.js (Ammo.js) … MMD物理用。必要時のみscriptで読み込み
  *    @pixiv/three-vrm@3.0.0             VRM読み込み・ヒューマノイド・表情・揺れもの
  *    @pixiv/three-vrm-animation@3.0.0   VRMAの読み込みとAnimationClip化
- *    fflate@0.8.2                       ZIP展開（MMDモデルのZIP）
+ *    fflate@0.8.2                       ZIP展開（MMDモデルのZIP）・PMX書き出しのZIP化
  *
  *  使用するブラウザー機能
  *    WebGL / IndexedDB（履歴・リスト） / localStorage（設定） / Pointer Events /
@@ -183,7 +208,7 @@ input[type=search]{-webkit-user-select:text;user-select:text}
  *    3. モデルの読み込み・カメラ      4. 表情（モーフ）
  *    5. 履歴（IndexedDB）            6. ポップアップ・物理・ループ設定
  *    7. 再生リスト                   8. クリップのキャッシュとリスト再生
- *    9. 保存（VRMA/GLB書き出し）     10. モーション再生（MMD物理・指・補間・読み込み）
+ *    9. 保存（VRMA/VMD/GLB/VRM/PMX書き出し） 10. モーション再生（MMD物理・指・補間・読み込み）
  *   11. 再生制御・UIイベント・カメラ操作  12. パネルの縦横配置・起動処理
  * ============================================================================
  */
@@ -196,7 +221,7 @@ import {MTLLoader} from 'three/addons/loaders/MTLLoader.js';
 import {MMDAnimationHelper} from 'three/addons/animation/MMDAnimationHelper.js';
 import {VRMLoaderPlugin, VRMUtils} from '@pixiv/three-vrm';
 import {VRMAnimationLoaderPlugin, createVRMAnimationClip} from '@pixiv/three-vrm-animation';
-import {unzipSync} from 'fflate';
+import {unzipSync, zipSync} from 'fflate';
 
 // ---- 1. シーン・カメラ・照明・状態変数 ----
 // byId：getElementById の短縮。val：共通関数(gv)が設定値を読む入口（名前は共通のまま）
@@ -1224,6 +1249,325 @@ byId('hist').addEventListener('click', async e => {
 try {
   byId('hist').open = localStorage.getItem('mvHistOpen') === '1';
 } catch {}
+try {
+  byId('groundBox').open = localStorage.getItem('mvGroundOpen') === '1';
+  byId('viewBox').open = localStorage.getItem('mvViewOpen') === '1';
+} catch {}
+byId('viewBox').addEventListener('toggle', () => {
+  try {
+    localStorage.setItem('mvViewOpen', byId('viewBox').open ? '1' : '0');
+  } catch {}
+});
+// ---- 背景色と床の表示（選んだ内容は次回起動時も保持）----
+// ---- おまけ：マグショット（身長チャートの背景＋ボードを持つ、だらっとした立ちポーズ）----
+const MUG_VRMA_B64 = 'Z2xURgIAAAAgRgAA4DcAAEpTT057ImFzc2V0Ijp7InZlcnNpb24iOiIyLjAiLCJnZW5lcmF0b3IiOiJtdWdzaG90X2dlbiJ9LCJleHRlbnNpb25zVXNlZCI6WyJWUk1DX3ZybV9hbmltYXRpb24iXSwic2NlbmUiOjAsInNjZW5lcyI6W3sibm9kZXMiOlswXX1dLCJub2RlcyI6W3sibmFtZSI6ImhpcHMiLCJ0cmFuc2xhdGlvbiI6WzAsMC45NSwwXSwiY2hpbGRyZW4iOlsxLDksMTddfSx7Im5hbWUiOiJzcGluZSIsInRyYW5zbGF0aW9uIjpbMCwwLjA4LDBdLCJjaGlsZHJlbiI6WzJdfSx7Im5hbWUiOiJjaGVzdCIsInRyYW5zbGF0aW9uIjpbMCwwLjEyLDBdLCJjaGlsZHJlbiI6WzMsNSwxM119LHsibmFtZSI6Im5lY2siLCJ0cmFuc2xhdGlvbiI6WzAsMC4yLDBdLCJjaGlsZHJlbiI6WzRdfSx7Im5hbWUiOiJoZWFkIiwidHJhbnNsYXRpb24iOlswLDAuMDgsMF19LHsibmFtZSI6ImxlZnRTaG91bGRlciIsInRyYW5zbGF0aW9uIjpbMC4wNCwwLjE0LDAuMF0sImNoaWxkcmVuIjpbNl19LHsibmFtZSI6ImxlZnRVcHBlckFybSIsInRyYW5zbGF0aW9uIjpbMC4xLDAsMF0sImNoaWxkcmVuIjpbN119LHsibmFtZSI6ImxlZnRMb3dlckFybSIsInRyYW5zbGF0aW9uIjpbMC4yOCwwLDBdLCJjaGlsZHJlbiI6WzhdfSx7Im5hbWUiOiJsZWZ0SGFuZCIsInRyYW5zbGF0aW9uIjpbMC4yNSwwLDBdLCJjaGlsZHJlbiI6WzIxLDI0LDI3LDMwXX0seyJuYW1lIjoibGVmdFVwcGVyTGVnIiwidHJhbnNsYXRpb24iOlswLjA4LC0wLjA1LDBdLCJjaGlsZHJlbiI6WzEwXX0seyJuYW1lIjoibGVmdExvd2VyTGVnIiwidHJhbnNsYXRpb24iOlswLC0wLjQyLDBdLCJjaGlsZHJlbiI6WzExXX0seyJuYW1lIjoibGVmdEZvb3QiLCJ0cmFuc2xhdGlvbiI6WzAsLTAuNDIsMF0sImNoaWxkcmVuIjpbMTJdfSx7Im5hbWUiOiJsZWZ0VG9lcyIsInRyYW5zbGF0aW9uIjpbMCwtMC4wNywwLjEyXX0seyJuYW1lIjoicmlnaHRTaG91bGRlciIsInRyYW5zbGF0aW9uIjpbLTAuMDQsMC4xNCwwLjBdLCJjaGlsZHJlbiI6WzE0XX0seyJuYW1lIjoicmlnaHRVcHBlckFybSIsInRyYW5zbGF0aW9uIjpbLTAuMSwwLDBdLCJjaGlsZHJlbiI6WzE1XX0seyJuYW1lIjoicmlnaHRMb3dlckFybSIsInRyYW5zbGF0aW9uIjpbLTAuMjgsMCwwXSwiY2hpbGRyZW4iOlsxNl19LHsibmFtZSI6InJpZ2h0SGFuZCIsInRyYW5zbGF0aW9uIjpbLTAuMjUsMCwwXSwiY2hpbGRyZW4iOlszMywzNiwzOSw0Ml19LHsibmFtZSI6InJpZ2h0VXBwZXJMZWciLCJ0cmFuc2xhdGlvbiI6Wy0wLjA4LC0wLjA1LDBdLCJjaGlsZHJlbiI6WzE4XX0seyJuYW1lIjoicmlnaHRMb3dlckxlZyIsInRyYW5zbGF0aW9uIjpbMCwtMC40MiwwXSwiY2hpbGRyZW4iOlsxOV19LHsibmFtZSI6InJpZ2h0Rm9vdCIsInRyYW5zbGF0aW9uIjpbMCwtMC40MiwwXSwiY2hpbGRyZW4iOlsyMF19LHsibmFtZSI6InJpZ2h0VG9lcyIsInRyYW5zbGF0aW9uIjpbMCwtMC4wNywwLjEyXX0seyJuYW1lIjoibGVmdEluZGV4UHJveGltYWwiLCJ0cmFuc2xhdGlvbiI6WzAuMDksMCwwLjAyXSwiY2hpbGRyZW4iOlsyMl19LHsibmFtZSI6ImxlZnRJbmRleEludGVybWVkaWF0ZSIsInRyYW5zbGF0aW9uIjpbMC4wNCwwLDBdLCJjaGlsZHJlbiI6WzIzXX0seyJuYW1lIjoibGVmdEluZGV4RGlzdGFsIiwidHJhbnNsYXRpb24iOlswLjAyNSwwLDBdfSx7Im5hbWUiOiJsZWZ0TWlkZGxlUHJveGltYWwiLCJ0cmFuc2xhdGlvbiI6WzAuMDksMCwwLjAwOF0sImNoaWxkcmVuIjpbMjVdfSx7Im5hbWUiOiJsZWZ0TWlkZGxlSW50ZXJtZWRpYXRlIiwidHJhbnNsYXRpb24iOlswLjA0LDAsMF0sImNoaWxkcmVuIjpbMjZdfSx7Im5hbWUiOiJsZWZ0TWlkZGxlRGlzdGFsIiwidHJhbnNsYXRpb24iOlswLjAyNSwwLDBdfSx7Im5hbWUiOiJsZWZ0UmluZ1Byb3hpbWFsIiwidHJhbnNsYXRpb24iOlswLjA5LDAsLTAuMDA0XSwiY2hpbGRyZW4iOlsyOF19LHsibmFtZSI6ImxlZnRSaW5nSW50ZXJtZWRpYXRlIiwidHJhbnNsYXRpb24iOlswLjA0LDAsMF0sImNoaWxkcmVuIjpbMjldfSx7Im5hbWUiOiJsZWZ0UmluZ0Rpc3RhbCIsInRyYW5zbGF0aW9uIjpbMC4wMjUsMCwwXX0seyJuYW1lIjoibGVmdExpdHRsZVByb3hpbWFsIiwidHJhbnNsYXRpb24iOlswLjA5LDAsLTAuMDE2MDAwMDAwMDAwMDAwMDA0XSwiY2hpbGRyZW4iOlszMV19LHsibmFtZSI6ImxlZnRMaXR0bGVJbnRlcm1lZGlhdGUiLCJ0cmFuc2xhdGlvbiI6WzAuMDQsMCwwXSwiY2hpbGRyZW4iOlszMl19LHsibmFtZSI6ImxlZnRMaXR0bGVEaXN0YWwiLCJ0cmFuc2xhdGlvbiI6WzAuMDI1LDAsMF19LHsibmFtZSI6InJpZ2h0SW5kZXhQcm94aW1hbCIsInRyYW5zbGF0aW9uIjpbLTAuMDksMCwwLjAyXSwiY2hpbGRyZW4iOlszNF19LHsibmFtZSI6InJpZ2h0SW5kZXhJbnRlcm1lZGlhdGUiLCJ0cmFuc2xhdGlvbiI6Wy0wLjA0LDAsMF0sImNoaWxkcmVuIjpbMzVdfSx7Im5hbWUiOiJyaWdodEluZGV4RGlzdGFsIiwidHJhbnNsYXRpb24iOlstMC4wMjUsMCwwXX0seyJuYW1lIjoicmlnaHRNaWRkbGVQcm94aW1hbCIsInRyYW5zbGF0aW9uIjpbLTAuMDksMCwwLjAwOF0sImNoaWxkcmVuIjpbMzddfSx7Im5hbWUiOiJyaWdodE1pZGRsZUludGVybWVkaWF0ZSIsInRyYW5zbGF0aW9uIjpbLTAuMDQsMCwwXSwiY2hpbGRyZW4iOlszOF19LHsibmFtZSI6InJpZ2h0TWlkZGxlRGlzdGFsIiwidHJhbnNsYXRpb24iOlstMC4wMjUsMCwwXX0seyJuYW1lIjoicmlnaHRSaW5nUHJveGltYWwiLCJ0cmFuc2xhdGlvbiI6Wy0wLjA5LDAsLTAuMDA0XSwiY2hpbGRyZW4iOls0MF19LHsibmFtZSI6InJpZ2h0UmluZ0ludGVybWVkaWF0ZSIsInRyYW5zbGF0aW9uIjpbLTAuMDQsMCwwXSwiY2hpbGRyZW4iOls0MV19LHsibmFtZSI6InJpZ2h0UmluZ0Rpc3RhbCIsInRyYW5zbGF0aW9uIjpbLTAuMDI1LDAsMF19LHsibmFtZSI6InJpZ2h0TGl0dGxlUHJveGltYWwiLCJ0cmFuc2xhdGlvbiI6Wy0wLjA5LDAsLTAuMDE2MDAwMDAwMDAwMDAwMDA0XSwiY2hpbGRyZW4iOls0M119LHsibmFtZSI6InJpZ2h0TGl0dGxlSW50ZXJtZWRpYXRlIiwidHJhbnNsYXRpb24iOlstMC4wNCwwLDBdLCJjaGlsZHJlbiI6WzQ0XX0seyJuYW1lIjoicmlnaHRMaXR0bGVEaXN0YWwiLCJ0cmFuc2xhdGlvbiI6Wy0wLjAyNSwwLDBdfV0sImFuaW1hdGlvbnMiOlt7Im5hbWUiOiJtdWdzaG90Iiwic2FtcGxlcnMiOlt7ImlucHV0IjowLCJvdXRwdXQiOjEsImludGVycG9sYXRpb24iOiJMSU5FQVIifSx7ImlucHV0IjowLCJvdXRwdXQiOjIsImludGVycG9sYXRpb24iOiJMSU5FQVIifSx7ImlucHV0IjowLCJvdXRwdXQiOjMsImludGVycG9sYXRpb24iOiJMSU5FQVIifSx7ImlucHV0IjowLCJvdXRwdXQiOjQsImludGVycG9sYXRpb24iOiJMSU5FQVIifSx7ImlucHV0IjowLCJvdXRwdXQiOjUsImludGVycG9sYXRpb24iOiJMSU5FQVIifSx7ImlucHV0IjowLCJvdXRwdXQiOjYsImludGVycG9sYXRpb24iOiJMSU5FQVIifSx7ImlucHV0IjowLCJvdXRwdXQiOjcsImludGVycG9sYXRpb24iOiJMSU5FQVIifSx7ImlucHV0IjowLCJvdXRwdXQiOjgsImludGVycG9sYXRpb24iOiJMSU5FQVIifSx7ImlucHV0IjowLCJvdXRwdXQiOjksImludGVycG9sYXRpb24iOiJMSU5FQVIifSx7ImlucHV0IjowLCJvdXRwdXQiOjEwLCJpbnRlcnBvbGF0aW9uIjoiTElORUFSIn0seyJpbnB1dCI6MCwib3V0cHV0IjoxMSwiaW50ZXJwb2xhdGlvbiI6IkxJTkVBUiJ9LHsiaW5wdXQiOjAsIm91dHB1dCI6MTIsImludGVycG9sYXRpb24iOiJMSU5FQVIifSx7ImlucHV0IjowLCJvdXRwdXQiOjEzLCJpbnRlcnBvbGF0aW9uIjoiTElORUFSIn0seyJpbnB1dCI6MCwib3V0cHV0IjoxNCwiaW50ZXJwb2xhdGlvbiI6IkxJTkVBUiJ9LHsiaW5wdXQiOjAsIm91dHB1dCI6MTUsImludGVycG9sYXRpb24iOiJMSU5FQVIifSx7ImlucHV0IjowLCJvdXRwdXQiOjE2LCJpbnRlcnBvbGF0aW9uIjoiTElORUFSIn0seyJpbnB1dCI6MCwib3V0cHV0IjoxNywiaW50ZXJwb2xhdGlvbiI6IkxJTkVBUiJ9LHsiaW5wdXQiOjAsIm91dHB1dCI6MTgsImludGVycG9sYXRpb24iOiJMSU5FQVIifSx7ImlucHV0IjowLCJvdXRwdXQiOjE5LCJpbnRlcnBvbGF0aW9uIjoiTElORUFSIn0seyJpbnB1dCI6MCwib3V0cHV0IjoyMCwiaW50ZXJwb2xhdGlvbiI6IkxJTkVBUiJ9LHsiaW5wdXQiOjAsIm91dHB1dCI6MjEsImludGVycG9sYXRpb24iOiJMSU5FQVIifSx7ImlucHV0IjowLCJvdXRwdXQiOjIyLCJpbnRlcnBvbGF0aW9uIjoiTElORUFSIn0seyJpbnB1dCI6MCwib3V0cHV0IjoyMywiaW50ZXJwb2xhdGlvbiI6IkxJTkVBUiJ9LHsiaW5wdXQiOjAsIm91dHB1dCI6MjQsImludGVycG9sYXRpb24iOiJMSU5FQVIifSx7ImlucHV0IjowLCJvdXRwdXQiOjI1LCJpbnRlcnBvbGF0aW9uIjoiTElORUFSIn0seyJpbnB1dCI6MCwib3V0cHV0IjoyNiwiaW50ZXJwb2xhdGlvbiI6IkxJTkVBUiJ9LHsiaW5wdXQiOjAsIm91dHB1dCI6MjcsImludGVycG9sYXRpb24iOiJMSU5FQVIifSx7ImlucHV0IjowLCJvdXRwdXQiOjI4LCJpbnRlcnBvbGF0aW9uIjoiTElORUFSIn0seyJpbnB1dCI6MCwib3V0cHV0IjoyOSwiaW50ZXJwb2xhdGlvbiI6IkxJTkVBUiJ9LHsiaW5wdXQiOjAsIm91dHB1dCI6MzAsImludGVycG9sYXRpb24iOiJMSU5FQVIifSx7ImlucHV0IjowLCJvdXRwdXQiOjMxLCJpbnRlcnBvbGF0aW9uIjoiTElORUFSIn0seyJpbnB1dCI6MCwib3V0cHV0IjozMiwiaW50ZXJwb2xhdGlvbiI6IkxJTkVBUiJ9LHsiaW5wdXQiOjAsIm91dHB1dCI6MzMsImludGVycG9sYXRpb24iOiJMSU5FQVIifSx7ImlucHV0IjowLCJvdXRwdXQiOjM0LCJpbnRlcnBvbGF0aW9uIjoiTElORUFSIn0seyJpbnB1dCI6MCwib3V0cHV0IjozNSwiaW50ZXJwb2xhdGlvbiI6IkxJTkVBUiJ9LHsiaW5wdXQiOjAsIm91dHB1dCI6MzYsImludGVycG9sYXRpb24iOiJMSU5FQVIifSx7ImlucHV0IjowLCJvdXRwdXQiOjM3LCJpbnRlcnBvbGF0aW9uIjoiTElORUFSIn0seyJpbnB1dCI6MCwib3V0cHV0IjozOCwiaW50ZXJwb2xhdGlvbiI6IkxJTkVBUiJ9LHsiaW5wdXQiOjAsIm91dHB1dCI6MzksImludGVycG9sYXRpb24iOiJMSU5FQVIifSx7ImlucHV0IjowLCJvdXRwdXQiOjQwLCJpbnRlcnBvbGF0aW9uIjoiTElORUFSIn0seyJpbnB1dCI6MCwib3V0cHV0Ijo0MSwiaW50ZXJwb2xhdGlvbiI6IkxJTkVBUiJ9LHsiaW5wdXQiOjAsIm91dHB1dCI6NDIsImludGVycG9sYXRpb24iOiJMSU5FQVIifSx7ImlucHV0IjowLCJvdXRwdXQiOjQzLCJpbnRlcnBvbGF0aW9uIjoiTElORUFSIn0seyJpbnB1dCI6MCwib3V0cHV0Ijo0NCwiaW50ZXJwb2xhdGlvbiI6IkxJTkVBUiJ9LHsiaW5wdXQiOjAsIm91dHB1dCI6NDUsImludGVycG9sYXRpb24iOiJMSU5FQVIifV0sImNoYW5uZWxzIjpbeyJzYW1wbGVyIjowLCJ0YXJnZXQiOnsibm9kZSI6MCwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MSwidGFyZ2V0Ijp7Im5vZGUiOjEsInBhdGgiOiJyb3RhdGlvbiJ9fSx7InNhbXBsZXIiOjIsInRhcmdldCI6eyJub2RlIjoyLCJwYXRoIjoicm90YXRpb24ifX0seyJzYW1wbGVyIjozLCJ0YXJnZXQiOnsibm9kZSI6MywicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6NCwidGFyZ2V0Ijp7Im5vZGUiOjQsInBhdGgiOiJyb3RhdGlvbiJ9fSx7InNhbXBsZXIiOjUsInRhcmdldCI6eyJub2RlIjo1LCJwYXRoIjoicm90YXRpb24ifX0seyJzYW1wbGVyIjo2LCJ0YXJnZXQiOnsibm9kZSI6NiwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6NywidGFyZ2V0Ijp7Im5vZGUiOjcsInBhdGgiOiJyb3RhdGlvbiJ9fSx7InNhbXBsZXIiOjgsInRhcmdldCI6eyJub2RlIjo4LCJwYXRoIjoicm90YXRpb24ifX0seyJzYW1wbGVyIjo5LCJ0YXJnZXQiOnsibm9kZSI6OSwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MTAsInRhcmdldCI6eyJub2RlIjoxMCwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MTEsInRhcmdldCI6eyJub2RlIjoxMSwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MTIsInRhcmdldCI6eyJub2RlIjoxMiwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MTMsInRhcmdldCI6eyJub2RlIjoxMywicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MTQsInRhcmdldCI6eyJub2RlIjoxNCwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MTUsInRhcmdldCI6eyJub2RlIjoxNSwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MTYsInRhcmdldCI6eyJub2RlIjoxNiwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MTcsInRhcmdldCI6eyJub2RlIjoxNywicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MTgsInRhcmdldCI6eyJub2RlIjoxOCwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MTksInRhcmdldCI6eyJub2RlIjoxOSwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MjAsInRhcmdldCI6eyJub2RlIjoyMCwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MjEsInRhcmdldCI6eyJub2RlIjoyMSwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MjIsInRhcmdldCI6eyJub2RlIjoyMiwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MjMsInRhcmdldCI6eyJub2RlIjoyMywicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MjQsInRhcmdldCI6eyJub2RlIjoyNCwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MjUsInRhcmdldCI6eyJub2RlIjoyNSwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MjYsInRhcmdldCI6eyJub2RlIjoyNiwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MjcsInRhcmdldCI6eyJub2RlIjoyNywicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MjgsInRhcmdldCI6eyJub2RlIjoyOCwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MjksInRhcmdldCI6eyJub2RlIjoyOSwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MzAsInRhcmdldCI6eyJub2RlIjozMCwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MzEsInRhcmdldCI6eyJub2RlIjozMSwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MzIsInRhcmdldCI6eyJub2RlIjozMiwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MzMsInRhcmdldCI6eyJub2RlIjozMywicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MzQsInRhcmdldCI6eyJub2RlIjozNCwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MzUsInRhcmdldCI6eyJub2RlIjozNSwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MzYsInRhcmdldCI6eyJub2RlIjozNiwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MzcsInRhcmdldCI6eyJub2RlIjozNywicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MzgsInRhcmdldCI6eyJub2RlIjozOCwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6MzksInRhcmdldCI6eyJub2RlIjozOSwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6NDAsInRhcmdldCI6eyJub2RlIjo0MCwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6NDEsInRhcmdldCI6eyJub2RlIjo0MSwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6NDIsInRhcmdldCI6eyJub2RlIjo0MiwicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6NDMsInRhcmdldCI6eyJub2RlIjo0MywicGF0aCI6InJvdGF0aW9uIn19LHsic2FtcGxlciI6NDQsInRhcmdldCI6eyJub2RlIjo0NCwicGF0aCI6InJvdGF0aW9uIn19XX1dLCJhY2Nlc3NvcnMiOlt7ImJ1ZmZlclZpZXciOjAsImNvbXBvbmVudFR5cGUiOjUxMjYsImNvdW50Ijo1LCJ0eXBlIjoiU0NBTEFSIiwibWluIjpbMC4wXSwibWF4IjpbNC4wXX0seyJidWZmZXJWaWV3IjoxLCJjb21wb25lbnRUeXBlIjo1MTI2LCJjb3VudCI6NSwidHlwZSI6IlZFQzQifSx7ImJ1ZmZlclZpZXciOjIsImNvbXBvbmVudFR5cGUiOjUxMjYsImNvdW50Ijo1LCJ0eXBlIjoiVkVDNCJ9LHsiYnVmZmVyVmlldyI6MywiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3Ijo0LCJjb21wb25lbnRUeXBlIjo1MTI2LCJjb3VudCI6NSwidHlwZSI6IlZFQzQifSx7ImJ1ZmZlclZpZXciOjUsImNvbXBvbmVudFR5cGUiOjUxMjYsImNvdW50Ijo1LCJ0eXBlIjoiVkVDNCJ9LHsiYnVmZmVyVmlldyI6NiwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3Ijo3LCJjb21wb25lbnRUeXBlIjo1MTI2LCJjb3VudCI6NSwidHlwZSI6IlZFQzQifSx7ImJ1ZmZlclZpZXciOjgsImNvbXBvbmVudFR5cGUiOjUxMjYsImNvdW50Ijo1LCJ0eXBlIjoiVkVDNCJ9LHsiYnVmZmVyVmlldyI6OSwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjoxMCwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjoxMSwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjoxMiwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjoxMywiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjoxNCwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjoxNSwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjoxNiwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjoxNywiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjoxOCwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjoxOSwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjoyMCwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjoyMSwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjoyMiwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjoyMywiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjoyNCwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjoyNSwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjoyNiwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjoyNywiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjoyOCwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjoyOSwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjozMCwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjozMSwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjozMiwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjozMywiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjozNCwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjozNSwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjozNiwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjozNywiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjozOCwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3IjozOSwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3Ijo0MCwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3Ijo0MSwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3Ijo0MiwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3Ijo0MywiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3Ijo0NCwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In0seyJidWZmZXJWaWV3Ijo0NSwiY29tcG9uZW50VHlwZSI6NTEyNiwiY291bnQiOjUsInR5cGUiOiJWRUM0In1dLCJidWZmZXJWaWV3cyI6W3siYnVmZmVyIjowLCJieXRlT2Zmc2V0IjowLCJieXRlTGVuZ3RoIjoyMH0seyJidWZmZXIiOjAsImJ5dGVPZmZzZXQiOjIwLCJieXRlTGVuZ3RoIjo4MH0seyJidWZmZXIiOjAsImJ5dGVPZmZzZXQiOjEwMCwiYnl0ZUxlbmd0aCI6ODB9LHsiYnVmZmVyIjowLCJieXRlT2Zmc2V0IjoxODAsImJ5dGVMZW5ndGgiOjgwfSx7ImJ1ZmZlciI6MCwiYnl0ZU9mZnNldCI6MjYwLCJieXRlTGVuZ3RoIjo4MH0seyJidWZmZXIiOjAsImJ5dGVPZmZzZXQiOjM0MCwiYnl0ZUxlbmd0aCI6ODB9LHsiYnVmZmVyIjowLCJieXRlT2Zmc2V0Ijo0MjAsImJ5dGVMZW5ndGgiOjgwfSx7ImJ1ZmZlciI6MCwiYnl0ZU9mZnNldCI6NTAwLCJieXRlTGVuZ3RoIjo4MH0seyJidWZmZXIiOjAsImJ5dGVPZmZzZXQiOjU4MCwiYnl0ZUxlbmd0aCI6ODB9LHsiYnVmZmVyIjowLCJieXRlT2Zmc2V0Ijo2NjAsImJ5dGVMZW5ndGgiOjgwfSx7ImJ1ZmZlciI6MCwiYnl0ZU9mZnNldCI6NzQwLCJieXRlTGVuZ3RoIjo4MH0seyJidWZmZXIiOjAsImJ5dGVPZmZzZXQiOjgyMCwiYnl0ZUxlbmd0aCI6ODB9LHsiYnVmZmVyIjowLCJieXRlT2Zmc2V0Ijo5MDAsImJ5dGVMZW5ndGgiOjgwfSx7ImJ1ZmZlciI6MCwiYnl0ZU9mZnNldCI6OTgwLCJieXRlTGVuZ3RoIjo4MH0seyJidWZmZXIiOjAsImJ5dGVPZmZzZXQiOjEwNjAsImJ5dGVMZW5ndGgiOjgwfSx7ImJ1ZmZlciI6MCwiYnl0ZU9mZnNldCI6MTE0MCwiYnl0ZUxlbmd0aCI6ODB9LHsiYnVmZmVyIjowLCJieXRlT2Zmc2V0IjoxMjIwLCJieXRlTGVuZ3RoIjo4MH0seyJidWZmZXIiOjAsImJ5dGVPZmZzZXQiOjEzMDAsImJ5dGVMZW5ndGgiOjgwfSx7ImJ1ZmZlciI6MCwiYnl0ZU9mZnNldCI6MTM4MCwiYnl0ZUxlbmd0aCI6ODB9LHsiYnVmZmVyIjowLCJieXRlT2Zmc2V0IjoxNDYwLCJieXRlTGVuZ3RoIjo4MH0seyJidWZmZXIiOjAsImJ5dGVPZmZzZXQiOjE1NDAsImJ5dGVMZW5ndGgiOjgwfSx7ImJ1ZmZlciI6MCwiYnl0ZU9mZnNldCI6MTYyMCwiYnl0ZUxlbmd0aCI6ODB9LHsiYnVmZmVyIjowLCJieXRlT2Zmc2V0IjoxNzAwLCJieXRlTGVuZ3RoIjo4MH0seyJidWZmZXIiOjAsImJ5dGVPZmZzZXQiOjE3ODAsImJ5dGVMZW5ndGgiOjgwfSx7ImJ1ZmZlciI6MCwiYnl0ZU9mZnNldCI6MTg2MCwiYnl0ZUxlbmd0aCI6ODB9LHsiYnVmZmVyIjowLCJieXRlT2Zmc2V0IjoxOTQwLCJieXRlTGVuZ3RoIjo4MH0seyJidWZmZXIiOjAsImJ5dGVPZmZzZXQiOjIwMjAsImJ5dGVMZW5ndGgiOjgwfSx7ImJ1ZmZlciI6MCwiYnl0ZU9mZnNldCI6MjEwMCwiYnl0ZUxlbmd0aCI6ODB9LHsiYnVmZmVyIjowLCJieXRlT2Zmc2V0IjoyMTgwLCJieXRlTGVuZ3RoIjo4MH0seyJidWZmZXIiOjAsImJ5dGVPZmZzZXQiOjIyNjAsImJ5dGVMZW5ndGgiOjgwfSx7ImJ1ZmZlciI6MCwiYnl0ZU9mZnNldCI6MjM0MCwiYnl0ZUxlbmd0aCI6ODB9LHsiYnVmZmVyIjowLCJieXRlT2Zmc2V0IjoyNDIwLCJieXRlTGVuZ3RoIjo4MH0seyJidWZmZXIiOjAsImJ5dGVPZmZzZXQiOjI1MDAsImJ5dGVMZW5ndGgiOjgwfSx7ImJ1ZmZlciI6MCwiYnl0ZU9mZnNldCI6MjU4MCwiYnl0ZUxlbmd0aCI6ODB9LHsiYnVmZmVyIjowLCJieXRlT2Zmc2V0IjoyNjYwLCJieXRlTGVuZ3RoIjo4MH0seyJidWZmZXIiOjAsImJ5dGVPZmZzZXQiOjI3NDAsImJ5dGVMZW5ndGgiOjgwfSx7ImJ1ZmZlciI6MCwiYnl0ZU9mZnNldCI6MjgyMCwiYnl0ZUxlbmd0aCI6ODB9LHsiYnVmZmVyIjowLCJieXRlT2Zmc2V0IjoyOTAwLCJieXRlTGVuZ3RoIjo4MH0seyJidWZmZXIiOjAsImJ5dGVPZmZzZXQiOjI5ODAsImJ5dGVMZW5ndGgiOjgwfSx7ImJ1ZmZlciI6MCwiYnl0ZU9mZnNldCI6MzA2MCwiYnl0ZUxlbmd0aCI6ODB9LHsiYnVmZmVyIjowLCJieXRlT2Zmc2V0IjozMTQwLCJieXRlTGVuZ3RoIjo4MH0seyJidWZmZXIiOjAsImJ5dGVPZmZzZXQiOjMyMjAsImJ5dGVMZW5ndGgiOjgwfSx7ImJ1ZmZlciI6MCwiYnl0ZU9mZnNldCI6MzMwMCwiYnl0ZUxlbmd0aCI6ODB9LHsiYnVmZmVyIjowLCJieXRlT2Zmc2V0IjozMzgwLCJieXRlTGVuZ3RoIjo4MH0seyJidWZmZXIiOjAsImJ5dGVPZmZzZXQiOjM0NjAsImJ5dGVMZW5ndGgiOjgwfSx7ImJ1ZmZlciI6MCwiYnl0ZU9mZnNldCI6MzU0MCwiYnl0ZUxlbmd0aCI6ODB9XSwiYnVmZmVycyI6W3siYnl0ZUxlbmd0aCI6MzYyMH1dLCJleHRlbnNpb25zIjp7IlZSTUNfdnJtX2FuaW1hdGlvbiI6eyJzcGVjVmVyc2lvbiI6IjEuMCIsImh1bWFub2lkIjp7Imh1bWFuQm9uZXMiOnsiaGlwcyI6eyJub2RlIjowfSwic3BpbmUiOnsibm9kZSI6MX0sImNoZXN0Ijp7Im5vZGUiOjJ9LCJuZWNrIjp7Im5vZGUiOjN9LCJoZWFkIjp7Im5vZGUiOjR9LCJsZWZ0U2hvdWxkZXIiOnsibm9kZSI6NX0sImxlZnRVcHBlckFybSI6eyJub2RlIjo2fSwibGVmdExvd2VyQXJtIjp7Im5vZGUiOjd9LCJsZWZ0SGFuZCI6eyJub2RlIjo4fSwibGVmdFVwcGVyTGVnIjp7Im5vZGUiOjl9LCJsZWZ0TG93ZXJMZWciOnsibm9kZSI6MTB9LCJsZWZ0Rm9vdCI6eyJub2RlIjoxMX0sImxlZnRUb2VzIjp7Im5vZGUiOjEyfSwicmlnaHRTaG91bGRlciI6eyJub2RlIjoxM30sInJpZ2h0VXBwZXJBcm0iOnsibm9kZSI6MTR9LCJyaWdodExvd2VyQXJtIjp7Im5vZGUiOjE1fSwicmlnaHRIYW5kIjp7Im5vZGUiOjE2fSwicmlnaHRVcHBlckxlZyI6eyJub2RlIjoxN30sInJpZ2h0TG93ZXJMZWciOnsibm9kZSI6MTh9LCJyaWdodEZvb3QiOnsibm9kZSI6MTl9LCJyaWdodFRvZXMiOnsibm9kZSI6MjB9LCJsZWZ0SW5kZXhQcm94aW1hbCI6eyJub2RlIjoyMX0sImxlZnRJbmRleEludGVybWVkaWF0ZSI6eyJub2RlIjoyMn0sImxlZnRJbmRleERpc3RhbCI6eyJub2RlIjoyM30sImxlZnRNaWRkbGVQcm94aW1hbCI6eyJub2RlIjoyNH0sImxlZnRNaWRkbGVJbnRlcm1lZGlhdGUiOnsibm9kZSI6MjV9LCJsZWZ0TWlkZGxlRGlzdGFsIjp7Im5vZGUiOjI2fSwibGVmdFJpbmdQcm94aW1hbCI6eyJub2RlIjoyN30sImxlZnRSaW5nSW50ZXJtZWRpYXRlIjp7Im5vZGUiOjI4fSwibGVmdFJpbmdEaXN0YWwiOnsibm9kZSI6Mjl9LCJsZWZ0TGl0dGxlUHJveGltYWwiOnsibm9kZSI6MzB9LCJsZWZ0TGl0dGxlSW50ZXJtZWRpYXRlIjp7Im5vZGUiOjMxfSwibGVmdExpdHRsZURpc3RhbCI6eyJub2RlIjozMn0sInJpZ2h0SW5kZXhQcm94aW1hbCI6eyJub2RlIjozM30sInJpZ2h0SW5kZXhJbnRlcm1lZGlhdGUiOnsibm9kZSI6MzR9LCJyaWdodEluZGV4RGlzdGFsIjp7Im5vZGUiOjM1fSwicmlnaHRNaWRkbGVQcm94aW1hbCI6eyJub2RlIjozNn0sInJpZ2h0TWlkZGxlSW50ZXJtZWRpYXRlIjp7Im5vZGUiOjM3fSwicmlnaHRNaWRkbGVEaXN0YWwiOnsibm9kZSI6Mzh9LCJyaWdodFJpbmdQcm94aW1hbCI6eyJub2RlIjozOX0sInJpZ2h0UmluZ0ludGVybWVkaWF0ZSI6eyJub2RlIjo0MH0sInJpZ2h0UmluZ0Rpc3RhbCI6eyJub2RlIjo0MX0sInJpZ2h0TGl0dGxlUHJveGltYWwiOnsibm9kZSI6NDJ9LCJyaWdodExpdHRsZUludGVybWVkaWF0ZSI6eyJub2RlIjo0M30sInJpZ2h0TGl0dGxlRGlzdGFsIjp7Im5vZGUiOjQ0fX19fX19ICAkDgAAQklOAAAAAAAAAIA/AAAAQAAAQEAAAIBAR+eOvAy3C7omIvo8ddd/P0fnjrwMtwu6JiL6PHXXfz9H5468DLcLuiYi+jx1138/R+eOvAy3C7omIvo8ddd/P0fnjrwMtwu6JiL6PHXXfz+SmjI9NKmVuso81rwwq38/kpoyPTSplbrKPNa8MKt/P5KaMj00qZW6yjzWvDCrfz+SmjI9NKmVuso81rwwq38/kpoyPTSplbrKPNa8MKt/P0kEej1epou6FbSOvM17fz8rRos9IpabupijjrxHXn8/SQR6PV6mi7oVtI68zXt/Pxx5XT22aXe6ysKOvCKWfz9JBHo9XqaLuhW0jrzNe38/bEtWPW2RszrOJdY8wo9/P2xLVj1tkbM6ziXWPMKPfz9sS1Y9bZGzOs4l1jzCj38/bEtWPW2RszrOJdY8wo9/P2xLVj1tkbM6ziXWPMKPfz+QgzG+ALIlvBztaj3Qrns/KHwxvsxyLbwx63U9T6R7P7yfMb6zGAS8Ako7PcLWez9WpTG+yKz4u8hJMD2y3ns/kIMxvgCyJbwc7Wo90K57P8lBb7tcqo69jNhVvcMGfz/JQW+7XKqOvYzYVb3DBn8/yUFvu1yqjr2M2FW9wwZ/P8lBb7tcqo69jNhVvcMGfz/JQW+7XKqOvYzYVb3DBn8/fYwrviuefD36HsK+tm9oP6MyL75c4GU9nP7AvsmXaD99jCu+K558Pfoewr62b2g/MuQnvmmsiT3rPMO+vURoP32MK74rnnw9+h7CvrZvaD8AAAAAIPwyvwAAAAD8Bzc/AAAAACD8Mr8AAAAA/Ac3PwAAAAAg/DK/AAAAAPwHNz8AAAAAIPwyvwAAAAD8Bzc/AAAAACD8Mr8AAAAA/Ac3PxmroL5WMia9tjsCvn+ncD8Zq6C+VjImvbY7Ar5/p3A/GaugvlYyJr22OwK+f6dwPxmroL5WMia9tjsCvn+ncD8Zq6C+VjImvbY7Ar5/p3A/AAAAAAAAAAAhtbK8Z/B/PwAAAAAAAAAAIbWyvGfwfz8AAAAAAAAAACG1srxn8H8/AAAAAAAAAAAhtbK8Z/B/PwAAAAAAAAAAIbWyvGfwfz/G8g49AAAAAAAAAAAU2H8/xvIOPQAAAAAAAAAAFNh/P8byDj0AAAAAAAAAABTYfz/G8g49AAAAAAAAAAAU2H8/xvIOPQAAAAAAAAAAFNh/P5lciLyzs7M9AcwnvKn2fj+ZXIi8s7OzPQHMJ7yp9n4/mVyIvLOzsz0BzCe8qfZ+P5lciLyzs7M9AcwnvKn2fj+ZXIi8s7OzPQHMJ7yp9n4/AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD/JQW+7XKqOPYzYVT3DBn8/yUFvu1yqjj2M2FU9wwZ/P8lBb7tcqo49jNhVPcMGfz/JQW+7XKqOPYzYVT3DBn8/yUFvu1yqjj2M2FU9wwZ/P32MK74rnny9+h7CPrZvaD9k5C6+YhJlvdQFwT7Dmmg/fYwrviuefL36HsI+tm9oP3EyKL5nE4q9tDXDPsNBaD99jCu+K558vfoewj62b2g/AAAAACD8Mj8AAAAA/Ac3PwAAAAAg/DI/AAAAAPwHNz8AAAAAIPwyPwAAAAD8Bzc/AAAAACD8Mj8AAAAA/Ac3PwAAAAAg/DI/AAAAAPwHNz8Zq6C+VjImPbY7Aj5/p3A/GaugvlYyJj22OwI+f6dwPxmroL5WMiY9tjsCPn+ncD8Zq6C+VjImPbY7Aj5/p3A/GaugvlYyJj22OwI+f6dwP8ChVb3xAo472lupvWnFfj/AoVW98QKOO9pbqb1pxX4/wKFVvfECjjvaW6m9acV+P8ChVb3xAo472lupvWnFfj/AoVW98QKOO9pbqb1pxX4/BRPWPQAAAAAAAAAA/Zh+PwUT1j0AAAAAAAAAAP2Yfj8FE9Y9AAAAAAAAAAD9mH4/BRPWPQAAAAAAAAAA/Zh+PwUT1j0AAAAAAAAAAP2Yfj/HBui8FYTvvZB3ZT0evH0/xwbovBWE772Qd2U9Hrx9P8cG6LwVhO+9kHdlPR68fT/HBui8FYTvvZB3ZT0evH0/xwbovBWE772Qd2U9Hrx9PwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAABZol2+ie55PwAAAAAAAAAAWaJdvonueT8AAAAAAAAAAFmiXb6J7nk/AAAAAAAAAABZol2+ie55PwAAAAAAAAAAWaJdvonueT8AAAAAAAAAAEQdr76yj3A/AAAAAAAAAABEHa++so9wPwAAAAAAAAAARB2vvrKPcD8AAAAAAAAAAEQdr76yj3A/AAAAAAAAAABEHa++so9wPwAAAAAAAAAA1NAxvlwcfD8AAAAAAAAAANTQMb5cHHw/AAAAAAAAAADU0DG+XBx8PwAAAAAAAAAA1NAxvlwcfD8AAAAAAAAAANTQMb5cHHw/AAAAAAAAAAAc9pm+yyZ0PwAAAAAAAAAAHPaZvssmdD8AAAAAAAAAABz2mb7LJnQ/AAAAAAAAAAAc9pm+yyZ0PwAAAAAAAAAAHPaZvssmdD8AAAAAAAAAAGxh2L7KA2g/AAAAAAAAAABsYdi+ygNoPwAAAAAAAAAAbGHYvsoDaD8AAAAAAAAAAGxh2L7KA2g/AAAAAAAAAABsYdi+ygNoPwAAAAAAAAAAWaJdvonueT8AAAAAAAAAAFmiXb6J7nk/AAAAAAAAAABZol2+ie55PwAAAAAAAAAAWaJdvonueT8AAAAAAAAAAFmiXb6J7nk/AAAAAAAAAABEHa++so9wPwAAAAAAAAAARB2vvrKPcD8AAAAAAAAAAEQdr76yj3A/AAAAAAAAAABEHa++so9wPwAAAAAAAAAARB2vvrKPcD8AAAAAAAAAAFBq7L4kE2M/AAAAAAAAAABQauy+JBNjPwAAAAAAAAAAUGrsviQTYz8AAAAAAAAAAFBq7L4kE2M/AAAAAAAAAABQauy+JBNjPwAAAAAAAAAAYLp3vk1leD8AAAAAAAAAAGC6d75NZXg/AAAAAAAAAABgune+TWV4PwAAAAAAAAAAYLp3vk1leD8AAAAAAAAAAGC6d75NZXg/AAAAAAAAAAAV78O+XoNsPwAAAAAAAAAAFe/Dvl6DbD8AAAAAAAAAABXvw75eg2w/AAAAAAAAAAAV78O+XoNsPwAAAAAAAAAAFe/Dvl6DbD8AAAAAAAAAAPc4+L4U518/AAAAAAAAAAD3OPi+FOdfPwAAAAAAAAAA9zj4vhTnXz8AAAAAAAAAAPc4+L4U518/AAAAAAAAAAD3OPi+FOdfPwAAAAAAAAAA7oOEvupGdz8AAAAAAAAAAO6DhL7qRnc/AAAAAAAAAADug4S+6kZ3PwAAAAAAAAAA7oOEvupGdz8AAAAAAAAAAO6DhL7qRnc/AAAAAAAAAABZol0+ie55PwAAAAAAAAAAWaJdPonueT8AAAAAAAAAAFmiXT6J7nk/AAAAAAAAAABZol0+ie55PwAAAAAAAAAAWaJdPonueT8AAAAAAAAAAEQdrz6yj3A/AAAAAAAAAABEHa8+so9wPwAAAAAAAAAARB2vPrKPcD8AAAAAAAAAAEQdrz6yj3A/AAAAAAAAAABEHa8+so9wPwAAAAAAAAAA1NAxPlwcfD8AAAAAAAAAANTQMT5cHHw/AAAAAAAAAADU0DE+XBx8PwAAAAAAAAAA1NAxPlwcfD8AAAAAAAAAANTQMT5cHHw/AAAAAAAAAAAc9pk+yyZ0PwAAAAAAAAAAHPaZPssmdD8AAAAAAAAAABz2mT7LJnQ/AAAAAAAAAAAc9pk+yyZ0PwAAAAAAAAAAHPaZPssmdD8AAAAAAAAAAGxh2D7KA2g/AAAAAAAAAABsYdg+ygNoPwAAAAAAAAAAbGHYPsoDaD8AAAAAAAAAAGxh2D7KA2g/AAAAAAAAAABsYdg+ygNoPwAAAAAAAAAAWaJdPonueT8AAAAAAAAAAFmiXT6J7nk/AAAAAAAAAABZol0+ie55PwAAAAAAAAAAWaJdPonueT8AAAAAAAAAAFmiXT6J7nk/AAAAAAAAAABEHa8+so9wPwAAAAAAAAAARB2vPrKPcD8AAAAAAAAAAEQdrz6yj3A/AAAAAAAAAABEHa8+so9wPwAAAAAAAAAARB2vPrKPcD8AAAAAAAAAAFBq7D4kE2M/AAAAAAAAAABQauw+JBNjPwAAAAAAAAAAUGrsPiQTYz8AAAAAAAAAAFBq7D4kE2M/AAAAAAAAAABQauw+JBNjPwAAAAAAAAAAYLp3Pk1leD8AAAAAAAAAAGC6dz5NZXg/AAAAAAAAAABgunc+TWV4PwAAAAAAAAAAYLp3Pk1leD8AAAAAAAAAAGC6dz5NZXg/AAAAAAAAAAAV78M+XoNsPwAAAAAAAAAAFe/DPl6DbD8AAAAAAAAAABXvwz5eg2w/AAAAAAAAAAAV78M+XoNsPwAAAAAAAAAAFe/DPl6DbD8AAAAAAAAAAPc4+D4U518/AAAAAAAAAAD3OPg+FOdfPwAAAAAAAAAA9zj4PhTnXz8AAAAAAAAAAPc4+D4U518/AAAAAAAAAAD3OPg+FOdfPwAAAAAAAAAA7oOEPupGdz8AAAAAAAAAAO6DhD7qRnc/AAAAAAAAAADug4Q+6kZ3PwAAAAAAAAAA7oOEPupGdz8AAAAAAAAAAO6DhD7qRnc/'; // 1フレーム(4秒ループの微ゆらぎ)のポーズVRMA。VRM/MMDどちらにも通常のモーションとして適用される
+const mug = {on: false, poseFile: null, prev: null, board: null, boardTex: null, boardCv: null, bgCv: null, bgTex: null, bgSig: '', mmdFor: null, mmdBones: null};
+const mugTmpA = new THREE.Vector3(),
+  mugTmpB = new THREE.Vector3(),
+  mugMid = new THREE.Vector3(),
+  mugProj = new THREE.Vector3();
+/** 埋め込みのポーズVRMAを File にして返す。 */
+function mugPoseFile() {
+  const bin = atob(MUG_VRMA_B64),
+    u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return new File([u8], 'mugshot.vrma', {type: 'application/octet-stream'});
+}
+/** 文字を最大幅で折り返す（スペースがあればそこで、日本語などは文字単位）。 */
+function mugWrap(g, text, maxW) {
+  const out = [];
+  let line = '';
+  for (const ch of text) {
+    const t = line + ch;
+    if (!line || g.measureText(t).width <= maxW) {
+      line = t;
+      continue;
+    }
+    const sp = line.lastIndexOf(' ');
+    if (ch !== ' ' && sp > 0) {
+      out.push(line.slice(0, sp));
+      line = line.slice(sp + 1) + ch;
+    } else {
+      out.push(line.trimEnd());
+      line = ch === ' ' ? '' : ch;
+    }
+  }
+  if (line.trim()) out.push(line.trimEnd());
+  return out;
+}
+/** ボードの文字テクスチャを描き直す（入力欄の文字を反映）。 */
+function mugDrawBoard() {
+  if (!mug.boardCv) {
+    mug.boardCv = document.createElement('canvas');
+    mug.boardCv.width = 640;
+    mug.boardCv.height = 400;
+    mug.boardTex = new THREE.CanvasTexture(mug.boardCv);
+    mug.boardTex.colorSpace = THREE.SRGBColorSpace;
+    mug.boardTex.anisotropy = 4;
+  }
+  const cv = mug.boardCv,
+    g = cv.getContext('2d'),
+    W = cv.width,
+    H = cv.height,
+    FONT = '"Arial Black","Helvetica Neue",Arial,"Hiragino Sans","Noto Sans JP",sans-serif';
+  g.fillStyle = '#0c0c0c';
+  g.fillRect(0, 0, W, H);
+  g.fillStyle = '#fff';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.font = 'bold 42px ' + FONT;
+  g.fillText('3D Model Viewer v' + APP_VERSION, W / 2, 52);
+  const text = (byId('mugText').value || '').trim(),
+    areaTop = 96,
+    areaH = 210;
+  let size = 112,
+    lines = [];
+  for (; size >= 28; size -= 4) {
+    g.font = 'bold ' + size + 'px ' + FONT;
+    lines = mugWrap(g, text, W - 80);
+    if (lines.length * size * 1.15 <= areaH) break;
+  }
+  const lh = size * 1.15,
+    y0 = areaTop + areaH / 2 - ((lines.length - 1) * lh) / 2;
+  lines.forEach((l, i) => g.fillText(l, W / 2, y0 + i * lh));
+  const fname = currentModelFile ? currentModelFile.name : '';
+  mug.boardName = fname;
+  let fs = 40;
+  for (; fs > 18; fs -= 2) {
+    g.font = 'bold ' + fs + 'px ' + FONT;
+    if (g.measureText(fname).width <= W - 60) break;
+  }
+  g.fillText(fname, W / 2, H - 46);
+  mug.boardTex.needsUpdate = true;
+}
+/** ボード（3Dの板）を用意する。 */
+function mugEnsureBoard() {
+  if (mug.board) return;
+  mugDrawBoard();
+  const front = new THREE.MeshBasicMaterial({map: mug.boardTex, toneMapped: false}),
+    edge = new THREE.MeshBasicMaterial({color: 0x1a1a1a}),
+    mesh = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.14, 0.006), [edge, edge, edge, edge, front, edge]);
+  mug.board = new THREE.Group();
+  mug.board.add(mesh);
+  scene.add(mug.board);
+}
+/** 両手首の中点（ワールド座標）を out に入れる。VRM／MMD以外や骨が無ければ false。 */
+function mugHandMid(out) {
+  if (vrm) {
+    const l = vrm.humanoid.getRawBoneNode('leftHand'),
+      r = vrm.humanoid.getRawBoneNode('rightHand');
+    if (l && r) {
+      l.getWorldPosition(mugTmpA);
+      r.getWorldPosition(mugTmpB);
+      out.addVectors(mugTmpA, mugTmpB).multiplyScalar(0.5);
+      return true;
+    }
+  } else if (mmdMesh) {
+    if (mug.mmdFor !== mmdMesh) {
+      mug.mmdFor = mmdMesh;
+      const f = n => mmdMesh.skeleton.bones.find(b => b.name === n);
+      mug.mmdBones = [f('左手首'), f('右手首')];
+    }
+    const [l, r] = mug.mmdBones;
+    if (l && r) {
+      l.getWorldPosition(mugTmpA);
+      r.getWorldPosition(mugTmpB);
+      out.addVectors(mugTmpA, mugTmpB).multiplyScalar(0.5);
+      return true;
+    }
+  }
+  return false;
+}
+/** 身長チャート（白地＋6インチ刻みの横線）を画面に合わせて描き、背景にする。モデルを約5'5"として目盛りを振る。 */
+function mugDrawBg(modelH) {
+  const w = canvas.width,
+    h = canvas.height;
+  if (!w || !h) return;
+  camera.updateMatrixWorld();
+  camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
+  const sig =
+    w + 'x' + h + '|' + camera.matrixWorld.elements.map(v => v.toFixed(3)).join() +
+    '|' + camera.projectionMatrix.elements[5].toFixed(4) + '|' + modelH.toFixed(4);
+  if (sig === mug.bgSig && mug.bgTex) return;
+  mug.bgSig = sig;
+  if (!mug.bgCv || mug.bgCv.width !== w || mug.bgCv.height !== h || !mug.bgTex) {
+    mug.bgCv = document.createElement('canvas');
+    mug.bgCv.width = w;
+    mug.bgCv.height = h;
+    mug.bgTex?.dispose();
+    mug.bgTex = new THREE.CanvasTexture(mug.bgCv);
+    mug.bgTex.colorSpace = THREE.SRGBColorSpace;
+    mug.bgTex.minFilter = THREE.LinearFilter;
+    mug.bgTex.generateMipmaps = false;
+    scene.background = mug.bgTex;
+  }
+  const g = mug.bgCv.getContext('2d'),
+    paper = '#f3f3f1',
+    ink = '#111',
+    ft = 0.3048 * (modelH / 1.65),
+    fs = Math.round(h * 0.024);
+  g.fillStyle = paper;
+  g.fillRect(0, 0, w, h);
+  g.font = 'bold ' + fs + 'px "Arial Black",Arial,sans-serif';
+  g.textBaseline = 'middle';
+  for (let half = 4; half <= 16; half++) {
+    const feet = half >> 1,
+      inch = half % 2 ? 6 : 0;
+    mugProj.set(0, half * 0.5 * ft, 0).project(camera);
+    const y = ((1 - mugProj.y) / 2) * h;
+    if (y < -fs || y > h + fs) continue;
+    const lw = Math.max(1, h * (inch ? 0.0032 : 0.007)),
+      label = feet + "'" + inch + '"',
+      boxW = g.measureText(label).width + fs * 0.8;
+    g.fillStyle = ink;
+    g.fillRect(0, y - lw / 2, w, lw);
+    g.fillStyle = paper;
+    g.fillRect(0, y - fs * 0.65, boxW, fs * 1.3);
+    g.fillRect(w - boxW, y - fs * 0.65, boxW, fs * 1.3);
+    g.fillStyle = ink;
+    g.textAlign = 'left';
+    g.fillText(label, fs * 0.35, y);
+    g.textAlign = 'right';
+    g.fillText(label, w - fs * 0.35, y);
+  }
+  mug.bgTex.needsUpdate = true;
+}
+/** マグショット中の毎フレーム処理：ボードを手の位置へ、背景チャートを更新。別のモーションが選ばれたら抜ける。 */
+function mugTick() {
+  if (currentMotionFile !== mug.poseFile) {
+    mugOff({keepMotion: true}); // 別のモーションを選んだ：背景などだけ戻す
+    return;
+  }
+  const modelH = Math.max(cameraTargetY / 0.48, 0.1),
+    b = mug.board;
+  b.visible = !!(vrm || mmdMesh); // ポーズが効くのはVRM/MMDだけ
+  if ((currentModelFile ? currentModelFile.name : '') !== mug.boardName) mugDrawBoard(); // モデルが変わったらファイル名を描き直す
+  let k = 1; // 手首の間隔に合わせてボード幅を調整（標準の0.85〜1.25倍に制限）
+  const hasHands = mugHandMid(mugMid);
+  if (hasHands) k = Math.min(1.25, Math.max(0.85, (mugTmpA.distanceTo(mugTmpB) * 0.98) / (0.22 * modelH)));
+  b.scale.setScalar(modelH * k);
+  if (hasHands) b.position.set(mugMid.x, mugMid.y + 0.045 * modelH * k, mugMid.z + 0.03 * modelH);
+  else b.position.set(0, 0.68 * modelH, 0.17 * modelH);
+  b.rotation.set(-0.1, 0, 0);
+  mugDrawBg(modelH);
+}
+const mugSetZoomUI = () => {
+  byId('zoom').value = String(zoom);
+  byId('zoomText').textContent = zoom.toFixed(2) + '×';
+};
+/** マグショットを始める。 */
+function mugOn() {
+  if (mug.on) return;
+  mug.prev = {
+    bg: byId('bgColor').value,
+    floor: floorMesh.visible,
+    yaw,
+    pitch,
+    zoom,
+    pan: panOffset.clone(),
+    auto: autoRotate,
+    file: currentMotionFile,
+    hist: currentHistoryIds.motion,
+    list: listPlayback,
+    ck: motionCacheKey
+  };
+  mug.on = true;
+  mug.bgSig = '';
+  mugEnsureBoard();
+  mug.board.visible = true;
+  floorMesh.visible = gridHelper.visible = false;
+  autoRotate = false;
+  byId('autoRotate').textContent = '自動回転 OFF';
+  yaw = 0;
+  pitch = 0;
+  zoom = 1.2;
+  panOffset.set(0, 0, 0);
+  mugSetZoomUI();
+  updateCamera();
+  mug.poseFile = mugPoseFile();
+  listPlayback = null;
+  loadMotion(mug.poseFile, {noHist: true});
+  byId('mugBtn').classList.add('on');
+}
+/** マグショットを終える。keepMotion なら、いま選ばれているモーションはそのまま。 */
+function mugOff(o = {}) {
+  if (!mug.on) return;
+  mug.on = false;
+  const p = mug.prev;
+  scene.background = new THREE.Color(p.bg);
+  renderer.setClearColor(p.bg);
+  mug.bgTex?.dispose();
+  mug.bgTex = mug.bgCv = null;
+  mug.bgSig = '';
+  if (mug.board) mug.board.visible = false;
+  floorMesh.visible = gridHelper.visible = p.floor;
+  yaw = p.yaw;
+  pitch = p.pitch;
+  zoom = p.zoom;
+  panOffset.copy(p.pan);
+  autoRotate = p.auto;
+  byId('autoRotate').textContent = '自動回転 ' + (autoRotate ? 'ON' : 'OFF');
+  mugSetZoomUI();
+  updateCamera();
+  byId('mugBtn').classList.remove('on');
+  mug.poseFile = null;
+  if (!o.keepMotion) {
+    if (p.file) {
+      listPlayback = p.list;
+      loadMotion(p.file, {noHist: true, ck: p.ck, fromList: !!p.list});
+      currentHistoryIds.motion = p.hist;
+      renderHistory();
+    } else {
+      currentMotionFile = null;
+      stopMotion();
+    }
+  }
+}
+byId('mugBtn').addEventListener('click', () => (mug.on ? mugOff() : mugOn()));
+byId('mugText').addEventListener('input', () => {
+  mugDrawBoard();
+  try {
+    localStorage.setItem('mvMugText', byId('mugText').value);
+  } catch {}
+});
+try {
+  const t = localStorage.getItem('mvMugText');
+  if (t !== null) byId('mugText').value = t;
+} catch {}
+/** 背景色を変える（3D表示の背景。保存して次回も使う）。 */
+function applyBackground(hex) {
+  if (mug.on) mugOff(); // 背景を選び直したらマグショットは解除
+  scene.background.set(hex);
+  renderer.setClearColor(hex);
+  byId('bgColor').value = hex;
+  try {
+    localStorage.setItem('mvBg', hex);
+  } catch {}
+}
+/** 床（円盤とグリッド）の表示を切り替える。 */
+function applyFloor(on) {
+  floorMesh.visible = gridHelper.visible = on;
+  byId('floorOn').checked = on;
+  try {
+    localStorage.setItem('mvFloor', on ? '1' : '0');
+  } catch {}
+}
+byId('bgPresets').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (b && b.dataset.bg) applyBackground(b.dataset.bg);
+});
+byId('bgColor').addEventListener('input', e => applyBackground(e.target.value));
+byId('floorOn').addEventListener('change', e => applyFloor(e.target.checked));
+try {
+  const bg = localStorage.getItem('mvBg');
+  if (/^#[0-9a-f]{6}$/i.test(bg || '')) applyBackground(bg);
+  if (localStorage.getItem('mvFloor') === '0') applyFloor(false);
+} catch {}
+byId('groundBox').addEventListener('toggle', () => {
+  try {
+    localStorage.setItem('mvGroundOpen', byId('groundBox').open ? '1' : '0');
+  } catch {}
+});
 byId('hist').addEventListener('toggle', () => {
   try {
     localStorage.setItem('mvHistOpen', byId('hist').open ? '1' : '0');
@@ -2148,39 +2492,51 @@ function exportVRMA(clip, vrmModel) {
   out.set(binBytes, 28 + jsonBytes.length);
   return new Blob([out], {type: 'application/octet-stream'});
 }
-/** モーションを保存する。VRMAはそのまま、VMDはVRMAへ変換して書き出す（変換にはVRMモデルが必要）。 */
-async function saveMotion() {
+/** モーションを保存する。fmt：'vrma' / 'vmd'。同じ形式はそのまま、VMD→VRMAはVRMモデルが必要、VRMA→VMDはモデル不要（足はFK・足IKはオフ）。 */
+async function saveMotion(fmt = 'vrma') {
   if (!currentMotionFile) {
     setStatus('先にモーションを読み込んでください');
     return;
   }
   const file = currentMotionFile,
-    base = file.name.replace(/\.[^.]+$/, '');
-  if (!/\.vmd$/i.test(file.name)) {
+    base = file.name.replace(/\.[^.]+$/, ''),
+    isVmd = /\.vmd$/i.test(file.name);
+  if (isVmd === (fmt === 'vmd')) {
     downloadBlob(file, file.name);
     setStatus(file.name + ' を保存しました（そのまま）');
     return;
   }
-  if (!vrm) {
+  if (isVmd && !vrm) {
     setStatus('VMD→VRMAの変換にはVRMモデルが必要です。VRMを開いてから保存してください');
     return;
   }
-  setStatus('VRMAに変換中…');
+  setStatus((isVmd ? 'VRMA' : 'VMD') + 'に変換中…');
   try {
-    vrm.humanoid.resetNormalizedPose(); // 変換は初期ポーズ基準で行う
-    const url = URL.createObjectURL(file);
-    let vmd;
-    try {
-      vmd = await new Promise((ok, ng) => new MMDLoader().loadVMD(url, ok, undefined, ng));
-    } finally {
-      URL.revokeObjectURL(url);
+    if (isVmd) {
+      vrm.humanoid.resetNormalizedPose(); // 変換は初期ポーズ基準で行う
+      const url = URL.createObjectURL(file);
+      let vmd;
+      try {
+        vmd = await new Promise((ok, ng) => new MMDLoader().loadVMD(url, ok, undefined, ng));
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+      const blob = exportVRMA(vmdToVRM(vmd, vrm), vrm);
+      downloadBlob(blob, base + '.vrma');
+      setStatus(base + '.vrma を保存しました（VMD→VRMA変換・' + formatBytes(blob.size) + '）');
+    } else {
+      const gltfLoader = new GLTFLoader();
+      gltfLoader.register(p => new VRMAnimationLoaderPlugin(p));
+      const anim = (await gltfLoader.parseAsync(fixVrmaSpec(await file.arrayBuffer()), '')).userData.vrmAnimations?.[0];
+      if (!anim) throw new Error('VRMAのアニメーションが見つかりません');
+      const {bytes, info} = vrmaToVMD(anim, 'VRMA変換'),
+        blob = new Blob([bytes], {type: 'application/octet-stream'});
+      downloadBlob(blob, base + '.vmd');
+      setStatus(base + '.vmd を保存しました（VRMA→VMD変換・ボーン' + info.bones + '・キー' + info.boneKeys + '・表情キー' + info.morphKeys + '・' + formatBytes(blob.size) + '。足はFK、足IKはオフ）');
     }
-    const blob = exportVRMA(vmdToVRM(vmd, vrm), vrm);
-    downloadBlob(blob, base + '.vrma');
-    setStatus(base + '.vrma を保存しました（VMD→VRMA変換・' + formatBytes(blob.size) + '）');
   } catch (e) {
     console.error(e);
-    setStatus('VRMAへの変換に失敗：' + (e?.message || e));
+    setStatus('モーションの変換に失敗：' + (e?.message || e));
   }
 }
 /** MMDのトゥーン材質(ShaderMaterial)を、GLB書き出し用の標準材質へ置き換える。 */
@@ -2225,49 +2581,895 @@ async function exportGLB() {
     obj.updateMatrixWorld(true);
   }
 }
-/** モデルを保存する。VRM/GLBはそのまま、それ以外はGLBへ変換する。 */
-async function saveModel() {
+// ============================================================================
+// 9b. VRM変換（GLB⇄VRM）：GLBのJSONにVRM拡張を足す／外すだけ。メッシュやテクスチャのバイナリはそのまま
+// ============================================================================
+/** GLB(ArrayBuffer)をJSONとバイナリに分ける。戻り値：{json, bin}。 */
+function glbParse(buf) {
+  const dv = new DataView(buf);
+  if (buf.byteLength < 20 || dv.getUint32(0, true) !== 0x46546c67) throw new Error('GLB形式ではありません');
+  let off = 12, json = null, bin = null;
+  while (off + 8 <= buf.byteLength) {
+    const len = dv.getUint32(off, true), type = dv.getUint32(off + 4, true), body = new Uint8Array(buf, off + 8, len);
+    if (type === 0x4e4f534a && !json) json = JSON.parse(new TextDecoder().decode(body));
+    else if (type === 0x004e4942 && !bin) bin = body;
+    off += 8 + len;
+  }
+  if (!json) throw new Error('GLBのJSONが見つかりません');
+  return {json, bin};
+}
+/** JSONとバイナリをGLB(Blob)にまとめる。 */
+function glbPack(json, bin) {
+  let jb = new TextEncoder().encode(JSON.stringify(json));
+  const jp = (4 - (jb.length % 4)) % 4;
+  if (jp) {
+    const t = new Uint8Array(jb.length + jp).fill(0x20);
+    t.set(jb);
+    jb = t;
+  }
+  const binLen = bin ? bin.length + ((4 - (bin.length % 4)) % 4) : 0,
+    total = 20 + jb.length + (bin ? 8 + binLen : 0),
+    out = new Uint8Array(total),
+    dv = new DataView(out.buffer);
+  dv.setUint32(0, 0x46546c67, true);
+  dv.setUint32(4, 2, true);
+  dv.setUint32(8, total, true);
+  dv.setUint32(12, jb.length, true);
+  dv.setUint32(16, 0x4e4f534a, true);
+  out.set(jb, 20);
+  if (bin) {
+    const o = 20 + jb.length;
+    dv.setUint32(o, binLen, true);
+    dv.setUint32(o + 4, 0x004e4942, true);
+    out.set(bin, o + 8);
+  }
+  return new Blob([out], {type: 'model/gltf-binary'});
+}
+const VRM_EXT_NAMES = ['VRM', 'VRMC_vrm', 'VRMC_springBone', 'VRMC_springBone_extended_collider', 'VRMC_node_constraint', 'VRMC_materials_mtoon', 'VRMC_materials_hdr_emissiveMultiplier'];
+/** GLBのJSONにVRM拡張（0.x の VRM / 1.0 の VRMC_vrm）があるか。 */
+const glbHasVrm = json => !!(json.extensions && (json.extensions.VRMC_vrm || json.extensions.VRM));
+/** VRM→GLB：VRM関連の拡張だけを外す（形状・骨・テクスチャはそのまま）。 */
+function vrmToGlb(buf) {
+  const {json, bin} = glbParse(buf),
+    drop = o => {
+      if (o) for (const k of VRM_EXT_NAMES) delete o[k];
+    };
+  drop(json.extensions);
+  for (const list of [json.materials, json.nodes])
+    for (const e of list || []) {
+      drop(e.extensions);
+      if (e.extensions && !Object.keys(e.extensions).length) delete e.extensions;
+    }
+  if (json.extensions && !Object.keys(json.extensions).length) delete json.extensions;
+  for (const key of ['extensionsUsed', 'extensionsRequired'])
+    if (json[key]) {
+      json[key] = json[key].filter(x => !VRM_EXT_NAMES.includes(x));
+      if (!json[key].length) delete json[key];
+    }
+  return glbPack(json, bin);
+}
+/** ノードの親・深さ・巡回順（親が先）を求める。戻り値：{parent, depth, order}。 */
+function glbHierarchy(json) {
+  const nodes = json.nodes || [], parent = new Array(nodes.length).fill(null), depth = new Array(nodes.length).fill(0), order = [];
+  nodes.forEach((nd, i) => (nd.children || []).forEach(c => (parent[c] = i)));
+  const roots = json.scenes?.[json.scene ?? 0]?.nodes || nodes.map((_, i) => i).filter(i => parent[i] == null),
+    walk = (i, d) => {
+      depth[i] = d;
+      order.push(i);
+      (nodes[i].children || []).forEach(c => walk(c, d + 1));
+    };
+  roots.forEach(r => walk(r, 0));
+  return {parent, depth, order};
+}
+/** ボーン名を {side:'left'|'right'|'', base:正規化した名前} にする。Mixamo・VRoid・Blender・MMD（日本語）などの命名に対応。 */
+function boneKey(name) {
+  const raw = String(name || '').replace(/^.*[:|]/, ''),
+    n = raw.normalize('NFKC').toLowerCase();
+  let side = '', trail = false;
+  if (/左/.test(n)) side = 'left';
+  else if (/右/.test(n)) side = 'right';
+  else if (/left/.test(n) || /(^|[^a-z])l([^a-z]|$)/.test(n)) side = 'left';
+  else if (/right/.test(n) || /(^|[^a-z])r([^a-z]|$)/.test(n)) side = 'right';
+  else if (/[a-z0-9][LR]$/.test(raw)) {
+    side = /L$/.test(raw) ? 'left' : 'right';
+    trail = true; // GLB書き出し時に「.L」の「.」が消えた名前（armL など）
+  }
+  let base = n.replace(/左|右|left|right/g, '').replace(/(^|[^a-z])[lr](?=[^a-z]|$)/g, '$1');
+  if (trail) base = base.replace(/[lr]$/, '');
+  base = base
+    .replace(/[\s_.\-]+/g, '_')
+    .replace(/^_|_$/g, '')
+    .replace(/^(mixamorig\d*_?|j_bip_c_|j_bip_|j_adj_|cc_base_|bip0*1_?|def_|org_|armature_?)/, '')
+    .replace(/^_/, '');
+  return {side, base};
+}
+const VRM_SIDED_RULES = [
+  ['Shoulder', /^(shoulder|clavicle|collar|肩|鎖骨)$/],
+  ['UpperArm', /^(upper_?arm|arm|腕)$/],
+  ['LowerArm', /^(lower_?arm|fore_?arm|elbow|ひじ|肘)$/],
+  ['Hand', /^(hand|wrist|手首)$/],
+  ['UpperLeg', /^(upper_?leg|up_?leg|thigh|足)$/],
+  ['LowerLeg', /^(lower_?leg|leg|calf|shin|knee|ひざ|膝)$/],
+  ['Foot', /^(foot|ankle|足首)$/],
+  ['Toes', /^(toes?|toe_?base|つま先|足先ex)$/],
+  ['Eye', /^(face)?eye(ball)?$|^目$/]
+];
+const VRM_FINGER_JP = {親指: 'Thumb', 人指: 'Index', 中指: 'Middle', 薬指: 'Ring', 小指: 'Little'},
+  VRM_FINGER_EN = {thumb: 'Thumb', index: 'Index', middle: 'Middle', ring: 'Ring', pinky: 'Little', pinkie: 'Little', little: 'Little'};
+/** ボーン名から人型ボーンを自動で割り当てる。戻り値：{VRMのボーン名: ノード番号}。割り当てられなかったものは含まない。 */
+function vrmAutoMap(json) {
+  const {parent, depth, order} = glbHierarchy(json),
+    joints = new Set();
+  (json.skins || []).forEach(s => (s.joints || []).forEach(j => joints.add(j)));
+  const map = {}, fam = [], fingers = {},
+    put = (slot, i) => {
+      if (map[slot] == null || depth[i] < depth[map[slot]]) map[slot] = i;
+    };
+  for (const i of order) {
+    if (joints.size && !joints.has(i)) continue;
+    const {side, base} = boneKey(json.nodes[i].name);
+    let fm = base.match(/^(?:hand_?|f_)?(thumb|index|middle|ring|pinky|pinkie|little)_?(?:\d+|proximal|intermediate|distal|metacarpal)?$/), fname = fm && VRM_FINGER_EN[fm[1]];
+    if (!fm) {
+      fm = base.match(/^(親指|人指|中指|薬指|小指)\d?$/);
+      fname = fm && VRM_FINGER_JP[fm[1]];
+    }
+    if (fm && side) {
+      (fingers[side + fname] ||= []).push(i);
+      continue;
+    }
+    if (!side) {
+      if (/^(spine(_?\d+)?|chest(_?\d+)?|upper_?chest|torso|上半身\d*)$/.test(base)) fam.push(i);
+      else if (/^(neck(_?\d+)?|首)$/.test(base)) put('neck', i);
+      else if (/^(head|頭)$/.test(base)) put('head', i);
+      else if (base === 'jaw') put('jaw', i);
+      else if (/^(hips?|pelvis)$/.test(base)) put('hips', i);
+      continue;
+    }
+    for (const [part, re] of VRM_SIDED_RULES)
+      if (re.test(base)) {
+        put(side + part, i);
+        break;
+      }
+  }
+  fam.sort((a, b) => depth[a] - depth[b]);
+  ['spine', 'chest', 'upperChest'].forEach((s, k) => {
+    if (fam[k] != null) map[s] = fam[k];
+  });
+  for (const [key, list] of Object.entries(fingers)) {
+    list.sort((a, b) => depth[a] - depth[b]);
+    const side = key.startsWith('left') ? 'left' : 'right', fname = key.slice(side.length),
+      parts = fname === 'Thumb' ? (list.length >= 3 ? ['Metacarpal', 'Proximal', 'Distal'] : ['Proximal', 'Distal']) : ['Proximal', 'Intermediate', 'Distal'];
+    parts.forEach((p, k) => {
+      if (list[k] != null) map[side + fname + p] = list[k];
+    });
+  }
+  // 腰：他のボーン全ての祖先でなければならない。名前で決まらない・祖先でない場合（MMDなど）は、背骨と両脚の共通の祖先にする
+  const isDesc = (a, anc) => {
+      for (let c = parent[a]; c != null; c = parent[c]) if (c === anc) return true;
+      return false;
+    },
+    others = Object.entries(map).filter(([k]) => k !== 'hips').map(([, v]) => v);
+  if (map.hips == null || !others.every(o => isDesc(o, map.hips))) {
+    const seeds = ['spine', 'leftUpperLeg', 'rightUpperLeg'].map(k => map[k]).filter(v => v != null);
+    if (seeds.length >= 2) {
+      const paths = seeds.map(s => {
+        const p = [];
+        for (let c = s; c != null; c = parent[c]) p.unshift(c);
+        return p;
+      });
+      let res = null;
+      for (let k = 0; paths.every(p => p[k] != null && p[k] === paths[0][k]); k++) res = paths[0][k];
+      if (res != null && !Object.values(map).includes(res)) map.hips = res;
+    }
+  }
+  return map;
+}
+const VRM_REQUIRED = ['hips', 'spine', 'head', 'leftUpperLeg', 'leftLowerLeg', 'leftFoot', 'rightUpperLeg', 'rightLowerLeg', 'rightFoot', 'leftUpperArm', 'leftLowerArm', 'leftHand', 'rightUpperArm', 'rightLowerArm', 'rightHand'],
+  VRM_OPTIONAL = [
+    'chest', 'upperChest', 'neck', 'leftEye', 'rightEye', 'jaw', 'leftShoulder', 'rightShoulder', 'leftToes', 'rightToes',
+    ...['left', 'right'].flatMap(s => [
+      s + 'ThumbMetacarpal', s + 'ThumbProximal', s + 'ThumbDistal',
+      ...['Index', 'Middle', 'Ring', 'Little'].flatMap(f => [s + f + 'Proximal', s + f + 'Intermediate', s + f + 'Distal'])
+    ])
+  ],
+  VRM_JP = {
+    hips: '腰', spine: '脊椎', chest: '胸', upperChest: '上胸', neck: '首', head: '頭', jaw: 'あご', leftEye: '左目', rightEye: '右目',
+    leftShoulder: '左肩', rightShoulder: '右肩', leftUpperArm: '左上腕', leftLowerArm: '左ひじ下', leftHand: '左手',
+    rightUpperArm: '右上腕', rightLowerArm: '右ひじ下', rightHand: '右手', leftUpperLeg: '左もも', leftLowerLeg: '左すね',
+    leftFoot: '左足', rightUpperLeg: '右もも', rightLowerLeg: '右すね', rightFoot: '右足', leftToes: '左つま先', rightToes: '右つま先'
+  };
+/** 割り当ての検査。問題があればメッセージ、なければ空文字。必須の不足・同じノードの重複・親子関係（腰が全ての祖先、腕は胸の下…）を見る。 */
+function vrmValidate(map, parent) {
+  const miss = VRM_REQUIRED.filter(k => map[k] == null);
+  if (miss.length) return '必須ボーンが未割り当て：' + miss.join('、');
+  const used = new Map();
+  for (const [k, v] of Object.entries(map)) {
+    if (v == null) continue;
+    if (used.has(v)) return '同じノードが2か所に割り当てられています：' + used.get(v) + ' / ' + k;
+    used.set(v, k);
+  }
+  const isDesc = (a, anc) => {
+      for (let c = parent[a]; c != null; c = parent[c]) if (c === anc) return true;
+      return false;
+    },
+    trunk = ['upperChest', 'chest', 'spine'],
+    par = {spine: ['hips'], chest: ['spine'], upperChest: ['chest', 'spine'], neck: ['upperChest', 'chest', 'spine'], head: ['neck', 'upperChest', 'chest', 'spine'], jaw: ['head'], leftEye: ['head'], rightEye: ['head']};
+  for (const s of ['left', 'right']) {
+    Object.assign(par, {
+      [s + 'Shoulder']: trunk, [s + 'UpperArm']: [s + 'Shoulder', ...trunk], [s + 'LowerArm']: [s + 'UpperArm'], [s + 'Hand']: [s + 'LowerArm'],
+      [s + 'UpperLeg']: ['hips'], [s + 'LowerLeg']: [s + 'UpperLeg'], [s + 'Foot']: [s + 'LowerLeg'], [s + 'Toes']: [s + 'Foot']
+    });
+    for (const f of ['Thumb', 'Index', 'Middle', 'Ring', 'Little']) for (const p of ['Metacarpal', 'Proximal', 'Intermediate', 'Distal']) par[s + f + p] = [s + 'Hand'];
+  }
+  for (const [k, v] of Object.entries(map)) {
+    if (v == null || k === 'hips') continue;
+    const pk = (par[k] || ['hips']).find(x => map[x] != null);
+    if (pk && !isDesc(v, map[pk])) return k + ' は ' + pk + ' の子孫のノードである必要があります（階層が合いません）';
+  }
+  return '';
+}
+const VRM_EXPR_RULES = {
+  blink: /^(まばたき|blink|fcl_eye_close|eye_?close(d)?)$/, blinkLeft: /^(ウィンク|ウインク|wink|blink_?l|fcl_eye_close_l)$/, blinkRight: /^(ウィンク右|ウインク右|wink_?r|blink_?r|fcl_eye_close_r)$/,
+  aa: /^(あ|aa?|fcl_mth_a)$/, ih: /^(い|ih?|fcl_mth_i)$/, ou: /^(う|ou|u|fcl_mth_u)$/, ee: /^(え|ee?|fcl_mth_e)$/, oh: /^(お|oh?|fcl_mth_o)$/,
+  happy: /^(笑い|にこり|happy|joy|smile|fcl_all_joy)$/, angry: /^(怒り|angry|fcl_all_angry)$/, sad: /^(困る|悲しい|sad|sorrow|fcl_all_sorrow)$/,
+  surprised: /^(びっくり|驚き|surprised|fcl_all_surprised)$/, relaxed: /^(relaxed|fun|fcl_all_fun)$/
+};
+/** モーフ名からVRMの表情プリセット（まばたき・口の形・感情）を割り当てる。名前が合うものだけ。 */
+function vrmExpressions(json) {
+  const preset = {};
+  (json.nodes || []).forEach((nd, ni) => {
+    if (nd.mesh == null) return;
+    const mesh = json.meshes?.[nd.mesh], names = mesh?.extras?.targetNames || mesh?.primitives?.[0]?.extras?.targetNames;
+    (names || []).forEach((tn, ti) => {
+      const k = String(tn).normalize('NFKC').toLowerCase().trim();
+      for (const [exp, re] of Object.entries(VRM_EXPR_RULES))
+        if (re.test(k)) {
+          (preset[exp] ||= {morphTargetBinds: []}).morphTargetBinds.push({node: ni, index: ti, weight: 1});
+          break;
+        }
+    });
+  });
+  return preset;
+}
+const VRM_LICENSES = {
+  personal: {licenseUrl: 'https://vrm.dev/licenses/1.0/', avatarPermission: 'onlyAuthor', commercialUsage: 'personalNonProfit', creditNotation: 'required', allowRedistribution: false, modification: 'prohibited'},
+  cc0: {licenseUrl: 'https://creativecommons.org/publicdomain/zero/1.0/', avatarPermission: 'everyone', commercialUsage: 'corporation', creditNotation: 'unnecessary', allowRedistribution: true, modification: 'allowModificationRedistribution'}
+};
+/** GLB→VRM(1.0)：GLBにVRM拡張（メタ情報・人型ボーン・表情）を足して返す。cfg：{map, name, author, license}。 */
+function glbToVrm(buf, cfg) {
+  const {json, bin} = glbParse(buf),
+    humanBones = {};
+  for (const [slot, node] of Object.entries(cfg.map)) if (node != null) humanBones[slot] = {node};
+  const vrm = {
+      specVersion: '1.0',
+      meta: {name: cfg.name || 'model', version: '1.0', authors: [cfg.author || 'unknown'], ...(VRM_LICENSES[cfg.license] || VRM_LICENSES.personal)},
+      humanoid: {humanBones}
+    },
+    preset = vrmExpressions(json);
+  if (Object.keys(preset).length) vrm.expressions = {preset};
+  if (humanBones.leftEye && humanBones.rightEye) {
+    const r = {inputMaxValue: 90, outputScale: 10};
+    vrm.lookAt = {type: 'bone', offsetFromHeadBone: [0, 0.06, 0], rangeMapHorizontalInner: r, rangeMapHorizontalOuter: r, rangeMapVerticalDown: r, rangeMapVerticalUp: r};
+  }
+  json.extensions = json.extensions || {};
+  json.extensions.VRMC_vrm = vrm;
+  json.extensionsUsed = [...new Set([...(json.extensionsUsed || []), 'VRMC_vrm'])];
+  return glbPack(json, bin);
+}
+/** 向きの確認：VRM1.0は+Z向き（キャラの左手が+X側）。逆向きなら警告文を返す。 */
+function vrmFacingWarn(json, map) {
+  if (map.leftUpperArm == null || map.rightUpperArm == null) return '';
+  const {parent} = glbHierarchy(json),
+    mat = nd => (nd.matrix ? new THREE.Matrix4().fromArray(nd.matrix) : new THREE.Matrix4().compose(new THREE.Vector3(...(nd.translation || [0, 0, 0])), new THREE.Quaternion(...(nd.rotation || [0, 0, 0, 1])), new THREE.Vector3(...(nd.scale || [1, 1, 1])))),
+    wx = i => {
+      const chain = [];
+      for (let c = i; c != null; c = parent[c]) chain.unshift(c);
+      const m = new THREE.Matrix4();
+      chain.forEach(c => m.multiply(mat(json.nodes[c])));
+      return new THREE.Vector3().setFromMatrixPosition(m).x;
+    };
+  return wx(map.leftUpperArm) < wx(map.rightUpperArm) ? '注意：このモデルは−Z向きです（VRMの規格は+Z向き）。読み込むと後ろ向きに見える場合があります' : '';
+}
+// ============================================================================
+// 9c. MMD(PMX)書き出し：three.jsのシーン（VRM/GLB/FBX/OBJ）→ PMX 2.0 ＋ テクスチャ(PNG) を ZIP にまとめる
+//     MMDの標準ボーン名に付け替え、センター・全ての親・足IKを追加する。物理（剛体・ジョイント）は作らない。
+// ============================================================================
+const MMD_BONE_NAMES = {hips: '下半身', spine: '上半身', chest: '上半身2', upperChest: '上半身3', neck: '首', jaw: 'あご'};
+for (const [s, jp] of [['left', '左'], ['right', '右']])
+  Object.assign(MMD_BONE_NAMES, {
+    [s + 'Eye']: jp + '目', [s + 'Shoulder']: jp + '肩', [s + 'UpperArm']: jp + '腕', [s + 'LowerArm']: jp + 'ひじ', [s + 'Hand']: jp + '手首',
+    [s + 'UpperLeg']: jp + '足', [s + 'LowerLeg']: jp + 'ひざ', [s + 'Foot']: jp + '足首', [s + 'Toes']: jp + '足先EX',
+    [s + 'ThumbMetacarpal']: jp + '親指０', [s + 'ThumbProximal']: jp + '親指１', [s + 'ThumbDistal']: jp + '親指２',
+    ...Object.fromEntries([['Index', '人指'], ['Middle', '中指'], ['Ring', '薬指'], ['Little', '小指']].flatMap(([f, n]) => [[s + f + 'Proximal', jp + n + '１'], [s + f + 'Intermediate', jp + n + '２'], [s + f + 'Distal', jp + n + '３']]))
+  });
+MMD_BONE_NAMES.head = '頭';
+const MMD_MORPH_NAMES = {blink: 'まばたき', blinkLeft: 'ウィンク', blinkRight: 'ウィンク右', aa: 'あ', ih: 'い', ou: 'う', ee: 'え', oh: 'お', happy: '笑い', angry: '怒り', sad: '困る', surprised: 'びっくり', relaxed: 'なごみ'};
+/** モーフ名をMMDの表情名に付け替える。戻り値：{name, panel}（panel：1眉 2目 3口 4その他）。 */
+function mmdMorphName(raw) {
+  const k = String(raw).normalize('NFKC').toLowerCase().trim();
+  for (const [exp, re] of Object.entries(VRM_EXPR_RULES))
+    if (re.test(k)) return {name: MMD_MORPH_NAMES[exp] || String(raw), panel: ['blink', 'blinkLeft', 'blinkRight'].includes(exp) ? 2 : ['aa', 'ih', 'ou', 'ee', 'oh'].includes(exp) ? 3 : 4};
+  return {name: String(raw), panel: /brw|brow|眉/.test(k) ? 1 : /eye|目/.test(k) ? 2 : /mth|mouth|口/.test(k) ? 3 : 4};
+}
+/** 書き込み用のバッファ（リトルエンディアン）。 */
+class PmxBuf {
+  constructor() {
+    this.b = new Uint8Array(1 << 20);
+    this.dv = new DataView(this.b.buffer);
+    this.n = 0;
+  }
+  need(k) {
+    if (this.n + k <= this.b.length) return;
+    const nb = new Uint8Array(Math.max(this.b.length * 2, this.n + k));
+    nb.set(this.b);
+    this.b = nb;
+    this.dv = new DataView(nb.buffer);
+  }
+  u8(v) { this.need(1); this.dv.setUint8(this.n, v); this.n += 1; }
+  i8(v) { this.need(1); this.dv.setInt8(this.n, v); this.n += 1; }
+  u16(v) { this.need(2); this.dv.setUint16(this.n, v, true); this.n += 2; }
+  i16(v) { this.need(2); this.dv.setInt16(this.n, v, true); this.n += 2; }
+  i32(v) { this.need(4); this.dv.setInt32(this.n, v, true); this.n += 4; }
+  f32(v) { this.need(4); this.dv.setFloat32(this.n, v, true); this.n += 4; }
+  f3(a) { this.f32(a[0]); this.f32(a[1]); this.f32(a[2]); }
+  idx(v) { this.i16(v); } // ボーン・テクスチャ・材質・モーフの番号は2バイト固定
+  vidx(size, v) { size === 2 ? this.u16(v) : this.i32(v); }
+  text(s) {
+    this.i32(s.length * 2);
+    this.need(s.length * 2);
+    for (let i = 0; i < s.length; i++) this.u16(s.charCodeAt(i));
+  }
+  bytes() { return this.b.slice(0, this.n); }
+}
+/** テクスチャ画像（ImageBitmap/Image/Canvas）をPNGのバイト列にする。 */
+async function textureToPng(img) {
+  const w = img.videoWidth || img.naturalWidth || img.width, h = img.videoHeight || img.naturalHeight || img.height;
+  if (!w || !h) return null;
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  c.getContext('2d').drawImage(img, 0, 0, w, h);
+  const blob = await new Promise(ok => c.toBlob(ok, 'image/png'));
+  return blob ? new Uint8Array(await blob.arrayBuffer()) : null;
+}
+/** シーンを疑似的なglTF JSON（ノード名・親子・スキンのジョイント）にする。ボーンの自動割り当てとダイアログ用。戻り値：{json, list}。list[i] が i 番のObject3D。 */
+function sceneAsJson(obj) {
+  const list = [], idx = new Map();
+  obj.traverse(o => {
+    idx.set(o, list.length);
+    list.push(o);
+  });
+  const nodes = list.map((o, i) => ({name: o.name || 'node' + i, children: o.children.map(c => idx.get(c))})),
+    joints = [];
+  list.forEach((o, i) => {
+    if (o.isBone) joints.push(i);
+  });
+  return {json: {scene: 0, scenes: [{nodes: [0]}], nodes, skins: [{joints}]}, list};
+}
+/**
+ * シーン → PMX(ZIP)。humanMap：{VRMのボーン名: Bone}。バインドポーズ（スキンの初期姿勢）で書き出すので、再生中のポーズには左右されない。
+ * 座標：three.js→MMD（Z反転・面の向きを逆順・約12.5倍）。VRM0.x（−Z向き）は向きを見て補正する。
+ */
+async function buildPmxZip(obj, humanMap, base) {
+  obj.updateMatrixWorld(true);
+  const meshes = [], skinBones = new Set(), bindWorld = new Map(), humanSet = new Set(Object.values(humanMap));
+  obj.traverse(o => {
+    if (o.isMesh && o.visible && o.geometry?.attributes?.position) meshes.push(o);
+  });
+  for (const m of meshes)
+    if (m.isSkinnedMesh)
+      m.skeleton.bones.forEach((b, k) => {
+        skinBones.add(b);
+        if (!bindWorld.has(b)) bindWorld.set(b, m.skeleton.boneInverses[k].clone().invert());
+      });
+  const bones = [];
+  obj.traverse(o => {
+    if (o.isBone && (skinBones.has(o) || humanSet.has(o))) {
+      bones.push(o);
+      if (!bindWorld.has(o)) bindWorld.set(o, o.matrixWorld.clone());
+    }
+  });
+  if (!humanMap.hips || !bones.length) throw new Error('人型の骨格（腰など）が見つかりません');
+  const wp = b => new THREE.Vector3().setFromMatrixPosition(bindWorld.get(b)),
+    L = humanMap.leftUpperArm, R = humanMap.rightUpperArm,
+    facing = L && R && wp(L).x < wp(R).x ? -1 : 1,
+    bodyH = humanMap.head && humanMap.leftFoot ? wp(humanMap.head).y - wp(humanMap.leftFoot).y : 1.4,
+    S = bodyH > 0.5 && bodyH < 2.2 ? 12.5 : 17.1 / Math.max(Math.abs(bodyH), 1e-6),
+    P = (x, y, z) => (facing > 0 ? [x * S, y * S, -z * S] : [-x * S, y * S, z * S]),
+    NRM = (x, y, z) => (facing > 0 ? [x, y, -z] : [-x, y, z]);
+  // ---- ボーン ----
+  const ROOT = 0, CENTER = 1, idxOf = new Map(), out = [], used = new Set(['全ての親', 'センター']), slotOf = new Map(Object.entries(humanMap).map(([k, v]) => [v, k])),
+    hp = wp(humanMap.hips);
+  out.push({name: '全ての親', en: 'Root', pos: [0, 0, 0], parent: -1, flags: 0x001e}, {name: 'センター', en: 'Center', pos: P(0, hp.y, hp.z), parent: ROOT, flags: 0x001e});
+  bones.forEach((b, k) => idxOf.set(b, 2 + k));
+  const exported = new Set(bones);
+  bones.forEach(b => {
+    const slot = slotOf.get(b);
+    let name = MMD_BONE_NAMES[slot] || String(b.name || 'bone'), n = 1;
+    while (used.has(name)) name = (MMD_BONE_NAMES[slot] || String(b.name || 'bone')) + '_' + ++n;
+    used.add(name);
+    let p = b.parent;
+    while (p && !exported.has(p)) p = p.parent;
+    const parent = b === humanMap.hips || (b === humanMap.spine && p === humanMap.hips) ? CENTER : p ? idxOf.get(p) : ROOT,
+      q = wp(b);
+    out.push({name, en: String(b.name || name), pos: P(q.x, q.y, q.z), parent, flags: 0x001a});
+  });
+  for (const [s, jp] of [['left', '左'], ['right', '右']]) {   // 足IK
+    const th = humanMap[s + 'UpperLeg'], kn = humanMap[s + 'LowerLeg'], ft = humanMap[s + 'Foot'];
+    if (!th || !kn || !ft || !idxOf.has(th) || !idxOf.has(kn) || !idxOf.has(ft)) continue;
+    const q = wp(ft);
+    out.push({name: jp + '足ＩＫ', en: s + ' leg IK', pos: P(q.x, q.y, q.z), parent: ROOT, flags: 0x003e, tail: [0, 0, 1],
+      ik: {target: idxOf.get(ft), loop: 40, limit: 2.0, links: [{bone: idxOf.get(kn), lim: [[-Math.PI, 0, 0], [-0.0087266, 0, 0]]}, {bone: idxOf.get(th)}]}});
+  }
+  // ---- 頂点 ----
+  const texOf = m => m.map ?? m.uniforms?.map?.value ?? null;
+  let vc = 0;
+  for (const m of meshes) vc += m.geometry.attributes.position.count;
+  const vp = new Float32Array(vc * 3), vn = new Float32Array(vc * 3), vu = new Float32Array(vc * 2), vt = new Uint8Array(vc), vi = new Int16Array(vc * 4), vw = new Float32Array(vc * 4),
+    meshBase = new Map(), tmp = new THREE.Vector3(), nm3 = new THREE.Matrix3();
+  let at = 0;
+  for (const m of meshes) {
+    const g = m.geometry, pa = g.attributes.position, na = g.attributes.normal, ua = g.attributes.uv, si = g.attributes.skinIndex, sw = g.attributes.skinWeight,
+      mat = m.isSkinnedMesh ? m.bindMatrix : m.matrixWorld, mats = Array.isArray(m.material) ? m.material : [m.material],
+      flipV = !!mats.map(x => x && texOf(x)).find(Boolean)?.flipY, skinned = m.isSkinnedMesh && si && sw;
+    let sb = CENTER;
+    for (let a = m.parent; a; a = a.parent) if (idxOf.has(a)) { sb = idxOf.get(a); break; }
+    nm3.getNormalMatrix(mat);
+    meshBase.set(m, at);
+    for (let i = 0; i < pa.count; i++, at++) {
+      tmp.fromBufferAttribute(pa, i).applyMatrix4(mat);
+      vp.set(P(tmp.x, tmp.y, tmp.z), at * 3);
+      if (na) tmp.fromBufferAttribute(na, i).applyMatrix3(nm3).normalize();
+      else tmp.set(0, 1, 0);
+      vn.set(NRM(tmp.x, tmp.y, tmp.z), at * 3);
+      if (ua) {
+        vu[at * 2] = ua.getX(i);
+        vu[at * 2 + 1] = flipV ? 1 - ua.getY(i) : ua.getY(i);
+      }
+      let pairs = [];
+      if (skinned) {
+        const ids = [si.getX(i), si.getY(i), si.getZ(i), si.getW(i)], ws = [sw.getX(i), sw.getY(i), sw.getZ(i), sw.getW(i)];
+        for (let k = 0; k < 4; k++) {
+          if (!(ws[k] > 1e-5)) continue;
+          const bi = idxOf.get(m.skeleton.bones[ids[k]]) ?? CENTER, ex = pairs.find(x => x[0] === bi);
+          if (ex) ex[1] += ws[k];
+          else pairs.push([bi, ws[k]]);
+        }
+        pairs.sort((x, y) => y[1] - x[1]);
+      }
+      if (!pairs.length) pairs = [[skinned ? CENTER : sb, 1]];
+      const type = pairs.length === 1 ? 0 : pairs.length === 2 ? 1 : 2, tot = pairs.reduce((s, x) => s + x[1], 0);
+      vt[at] = type;
+      pairs = pairs.slice(0, 4);
+      for (let k = 0; k < 4; k++) {
+        vi[at * 4 + k] = pairs[k] ? pairs[k][0] : pairs[0][0];
+        vw[at * 4 + k] = pairs[k] ? pairs[k][1] / tot : 0;
+      }
+    }
+  }
+  // ---- 面と材質 ----
+  const faces = [], mout = [];
+  for (const m of meshes) {
+    const g = m.geometry, b0 = meshBase.get(m), index = g.index, n = index ? index.count : g.attributes.position.count,
+      mats = Array.isArray(m.material) ? m.material : [m.material],
+      groups = Array.isArray(m.material) && g.groups.length ? g.groups : [{start: 0, count: n, materialIndex: 0}];
+    for (const gr of groups) {
+      const mt = mats[gr.materialIndex] || mats[0], start = gr.start, cnt = Math.min(gr.count, n - start), c3 = cnt - (cnt % 3);
+      if (c3 <= 0) continue;
+      for (let k = start; k < start + c3; k += 3) {
+        const a = index ? index.getX(k) : k, b = index ? index.getX(k + 1) : k + 1, c = index ? index.getX(k + 2) : k + 2;
+        faces.push(b0 + a, b0 + c, b0 + b);
+      }
+      mout.push({name: mt.name || m.name || 'material' + (mout.length + 1), mt, count: c3});
+    }
+  }
+  // ---- テクスチャ ----
+  const files = [], texIdx = new Map();
+  for (const x of mout) {
+    const t = texOf(x.mt);
+    if (!t || !t.image || texIdx.has(t)) continue;
+    const png = await textureToPng(t.image);
+    if (png) {
+      texIdx.set(t, files.length);
+      files.push({name: 'tex_' + files.length + '.png', data: png});
+    }
+  }
+  // ---- モーフ（頂点モーフのみ）----
+  const morphs = new Map();
+  for (const m of meshes) {
+    const g = m.geometry, dict = m.morphTargetDictionary, ma = g.morphAttributes?.position;
+    if (!dict || !ma) continue;
+    const mat = m.isSkinnedMesh ? m.bindMatrix : m.matrixWorld, m3 = new THREE.Matrix3().setFromMatrix4(mat), pa = g.attributes.position, b0 = meshBase.get(m), v0 = new THREE.Vector3();
+    for (const [raw, k] of Object.entries(dict)) {
+      const att = ma[k];
+      if (!att) continue;
+      const key = mmdMorphName(raw);
+      let e = morphs.get(key.name);
+      if (!e) morphs.set(key.name, (e = {panel: key.panel, offs: []}));
+      for (let i = 0; i < att.count; i++) {
+        tmp.fromBufferAttribute(att, i);
+        if (!g.morphTargetsRelative) tmp.sub(v0.fromBufferAttribute(pa, i));
+        if (Math.abs(tmp.x) + Math.abs(tmp.y) + Math.abs(tmp.z) < 1e-7) continue;
+        tmp.applyMatrix3(m3);
+        e.offs.push([b0 + i, P(tmp.x, tmp.y, tmp.z)]);
+      }
+    }
+  }
+  const morphList = [...morphs].filter(([, e]) => e.offs.length);
+  // ---- 書き出し ----
+  const w = new PmxBuf(), vsz = vc > 65535 ? 4 : 2;
+  for (const c of 'PMX ') w.u8(c.charCodeAt(0));
+  w.f32(2.0);
+  [8, 0, 0, vsz, 2, 2, 2, 2, 2].forEach(v => w.u8(v));
+  w.text(base); w.text(base); w.text('model_viewer でGLB/VRM/FBX/OBJから変換'); w.text('converted by model_viewer');
+  w.i32(vc);
+  for (let i = 0; i < vc; i++) {
+    w.f3(vp.subarray(i * 3, i * 3 + 3)); w.f3(vn.subarray(i * 3, i * 3 + 3)); w.f32(vu[i * 2]); w.f32(vu[i * 2 + 1]);
+    w.u8(vt[i]);
+    if (vt[i] === 0) w.idx(vi[i * 4]);
+    else if (vt[i] === 1) { w.idx(vi[i * 4]); w.idx(vi[i * 4 + 1]); w.f32(vw[i * 4] / ((vw[i * 4] + vw[i * 4 + 1]) || 1)); }
+    else { for (let k = 0; k < 4; k++) w.idx(vi[i * 4 + k]); for (let k = 0; k < 4; k++) w.f32(vw[i * 4 + k]); }
+    w.f32(1);
+  }
+  w.i32(faces.length);
+  for (const f of faces) w.vidx(vsz, f);
+  w.i32(files.length);
+  files.forEach(f => w.text(f.name));
+  w.i32(mout.length);
+  for (const x of mout) {
+    const mt = x.mt, c = (mt.color ?? mt.uniforms?.litFactor?.value)?.getRGB?.(new THREE.Color(), THREE.SRGBColorSpace) || {r: 1, g: 1, b: 1},
+      t = texOf(mt), ti = t && texIdx.has(t) ? texIdx.get(t) : -1;
+    w.text(String(x.name)); w.text(String(x.name));
+    w.f32(c.r); w.f32(c.g); w.f32(c.b); w.f32(mt.opacity ?? 1);
+    w.f3([0, 0, 0]); w.f32(5); w.f3([c.r * 0.5, c.g * 0.5, c.b * 0.5]);
+    w.u8(0x0a | (mt.side === THREE.DoubleSide ? 1 : 0));
+    w.f32(0); w.f32(0); w.f32(0); w.f32(1); w.f32(1);
+    w.idx(ti); w.idx(-1); w.u8(0); w.u8(1); w.u8(1);
+    w.text('');
+    w.i32(x.count);
+  }
+  w.i32(out.length);
+  for (const b of out) {
+    w.text(b.name); w.text(b.en); w.f3(b.pos); w.idx(b.parent); w.i32(0); w.u16(b.flags);
+    w.f3(b.tail || [0, 0, 0]);
+    if (b.ik) {
+      w.idx(b.ik.target); w.i32(b.ik.loop); w.f32(b.ik.limit); w.i32(b.ik.links.length);
+      for (const l of b.ik.links) { w.idx(l.bone); w.u8(l.lim ? 1 : 0); if (l.lim) { w.f3(l.lim[0]); w.f3(l.lim[1]); } }
+    }
+  }
+  w.i32(morphList.length);
+  for (const [name, e] of morphList) {
+    w.text(name); w.text(name); w.u8(e.panel); w.u8(1); w.i32(e.offs.length);
+    for (const [vi2, d] of e.offs) { w.vidx(vsz, vi2); w.f3(d); }
+  }
+  w.i32(3);
+  w.text('Root'); w.text('Root'); w.u8(1); w.i32(1); w.u8(0); w.idx(0);
+  w.text('表情'); w.text('Exp'); w.u8(1); w.i32(morphList.length);
+  morphList.forEach((_, i) => { w.u8(1); w.idx(i); });
+  w.text('ボーン'); w.text('Bones'); w.u8(0); w.i32(out.length - 1);
+  for (let i = 1; i < out.length; i++) { w.u8(0); w.idx(i); }
+  w.i32(0); // 剛体
+  w.i32(0); // ジョイント
+  const zipFiles = {[base + '.pmx']: w.bytes()};
+  files.forEach(f => (zipFiles[f.name] = f.data));
+  return {blob: new Blob([zipSync(zipFiles, {level: 0})], {type: 'application/zip'}), info: {bones: out.length, vertices: vc, materials: mout.length, textures: files.length, morphs: morphList.length, scale: S, facing}};
+}
+// ============================================================================
+// 9d. VRMA→VMD（MMDモーション）書き出し。既存のVMD→VRMAの逆変換（MMD標準のAポーズ約35度・上半身/下半身の分け方を共通の前提にする）
+// ============================================================================
+let sjisTable = null;
+/** Shift-JISのバイト列にする（ブラウザのTextDecoderで全コードを復号して作った逆引き表を使う）。幅を超える分は切り捨て。 */
+function sjisBytes(str, width) {
+  if (!sjisTable) {
+    sjisTable = new Map();
+    const dec = new TextDecoder('shift_jis');
+    for (let b = 0xa1; b <= 0xdf; b++) sjisTable.set(dec.decode(new Uint8Array([b])), [b]);
+    for (let a = 0x81; a <= 0xfc; a++) {
+      if (a > 0x9f && a < 0xe0) continue;
+      for (let b = 0x40; b <= 0xfc; b++) {
+        if (b === 0x7f) continue;
+        const ch = dec.decode(new Uint8Array([a, b]));
+        if (ch.length === 1 && ch !== '\ufffd' && !sjisTable.has(ch)) sjisTable.set(ch, [a, b]);
+      }
+    }
+  }
+  const out = new Uint8Array(width);
+  let n = 0;
+  for (const ch of String(str)) {
+    const bs = ch.charCodeAt(0) < 0x80 ? [ch.charCodeAt(0)] : sjisTable.get(ch) || [0x3f];
+    if (n + bs.length > width) break;
+    for (const b of bs) out[n++] = b;
+  }
+  return out;
+}
+/** フレーム 0..N-1 から残すフレームを選ぶ。err(a,b)：a→b を直線（球面）補間したとき、間のフレームの最大誤差。 */
+function pickKeyFrames(N, err, tol) {
+  const keep = [0];
+  for (let a = 0; a < N - 1; ) {
+    let b = a + 1;
+    while (b + 1 < N && err(a, b + 1) <= tol) b++;
+    keep.push(b);
+    a = b;
+  }
+  return keep;
+}
+const VMD_FINGERS = [['Thumb', '親指', ['Metacarpal', 'Proximal', 'Distal'], ['０', '１', '２']], ...[['Index', '人指'], ['Middle', '中指'], ['Ring', '薬指'], ['Little', '小指']].map(([f, n]) => [f, n, ['Proximal', 'Intermediate', 'Distal'], ['１', '２', '３']])];
+/** VRMAnimation（@pixiv/three-vrm-animation）→ VMDのバイト列。戻り値：{bytes, info}。 */
+function vrmaToVMD(anim, modelName = 'VRMA') {
+  const dur = Math.max(anim.duration, 1 / 30), N = Math.ceil(dur * 30 - 1e-3) + 1, times = Float32Array.from({length: N}, (_, i) => Math.min(i / 30, dur)),
+    Q = () => new THREE.Quaternion(), V = (x, y, z) => new THREE.Vector3(x, y, z),
+    itp = new Map([...anim.humanoidTracks.rotation].map(([k, t]) => [k, t.createInterpolant()])),
+    q = (k, t) => {
+      const f = itp.get(k);
+      if (!f) return Q();
+      const a = f.evaluate(t);
+      return new THREE.Quaternion(a[0], a[1], a[2], a[3]);
+    },
+    hip = t => q('hips', t), th = (35 * Math.PI) / 180,
+    defs = [   // n：MMDのボーン名、f：回転、need：このうちどれかのトラックがVRMAにあれば書く
+      {n: '下半身', f: hip, need: ['hips']}, {n: '上半身', f: t => hip(t).multiply(q('spine', t)), need: ['hips', 'spine']},
+      {n: '上半身2', f: t => q('chest', t).multiply(q('upperChest', t)), need: ['chest', 'upperChest']},
+      {n: '首', f: t => q('neck', t), need: ['neck']}, {n: '頭', f: t => q('head', t), need: ['head']}
+    ];
+  for (const [s, v, sg] of [['左', 'left', 1], ['右', 'right', -1]]) {
+    const R = Q().setFromUnitVectors(V(sg * Math.cos(th), -Math.sin(th), 0), V(sg, 0, 0)), Ri = R.clone().invert(),
+      one = (n, k) => ({n: s + n, f: t => q(v + k, t), need: [v + k]}),
+      arm = (n, k) => ({n: s + n, f: t => q(v + k, t).multiply(R), need: [v + k]}),                          // 上腕：VMDのAポーズ基準へ
+      lim = (n, k) => ({n: s + n, f: t => Ri.clone().multiply(q(v + k, t)).multiply(R), need: [v + k]});     // ひじ・手首・指：親の補正を打ち消す
+    defs.push(one('肩', 'Shoulder'), arm('腕', 'UpperArm'), lim('ひじ', 'LowerArm'), lim('手首', 'Hand'), one('足', 'UpperLeg'), one('ひざ', 'LowerLeg'), one('足首', 'Foot'));
+    for (const [f, jp, parts, nums] of VMD_FINGERS) parts.forEach((p, i) => defs.push(lim(jp + nums[i], f + p)));
+  }
+  const bones = [];
+  for (const d of defs) {
+    if (!d.need.some(k => itp.has(k))) continue;
+    const qs = [], prev = Q();
+    for (let i = 0; i < N; i++) {
+      const r = d.f(times[i]).normalize();
+      if (i && r.dot(prev) < 0) r.set(-r.x, -r.y, -r.z, -r.w);
+      prev.copy(r);
+      qs.push(r.clone());
+    }
+    const err = (a, b) => {
+      let m = 0;
+      for (let i = a + 1; i < b; i++) m = Math.max(m, 2 * Math.acos(Math.min(1, Math.abs(Q().copy(qs[a]).slerp(qs[b], (i - a) / (b - a)).dot(qs[i])))));
+      return m;
+    };
+    bones.push({name: d.n, keys: pickKeyFrames(N, err, 0.003).map(i => ({frame: i, pos: [0, 0, 0], q: qs[i]}))});
+  }
+  // 腰の移動 → センター（MMD単位。体の大きさの比で拡縮：VMD→VRMAと同じ 0.08×(腰の高さ/0.92)）
+  const tr = anim.humanoidTracks.translation.get('hips'), r0 = anim.restHipsPosition || V(0, 0.92, 0);
+  if (tr) {
+    const f = tr.createInterpolant(), k = 0.08 * (r0.y / 0.92 || 1), pts = [];
+    for (let i = 0; i < N; i++) {
+      const a = f.evaluate(times[i]);
+      pts.push(V((a[0] - r0.x) / k, (a[1] - r0.y) / k, -(a[2] - r0.z) / k));   // Zは左手系へ
+    }
+    const err = (a, b) => {
+      let m = 0;
+      for (let i = a + 1; i < b; i++) m = Math.max(m, V(0, 0, 0).lerpVectors(pts[a], pts[b], (i - a) / (b - a)).distanceTo(pts[i]));
+      return m;
+    };
+    bones.push({name: 'センター', keys: pickKeyFrames(N, err, 0.02).map(i => ({frame: i, pos: pts[i].toArray(), q: Q()}))});
+  }
+  // 表情
+  const MORPH = {blink: 'まばたき', aa: 'あ', ih: 'い', ou: 'う', ee: 'え', oh: 'お', happy: '笑い', angry: '怒り', sad: '困る', surprised: 'びっくり', relaxed: 'なごみ', blinkLeft: 'ウィンク', blinkRight: 'ウィンク右'}, morphs = [];
+  for (const [name, track] of anim.expressionTracks?.preset || []) {
+    if (!MORPH[name]) continue;
+    const f = track.createInterpolant(), w = Float32Array.from({length: N}, (_, i) => f.evaluate(times[i])[0]),
+      err = (a, b) => {
+        let m = 0;
+        for (let i = a + 1; i < b; i++) m = Math.max(m, Math.abs(w[a] + ((w[b] - w[a]) * (i - a)) / (b - a) - w[i]));
+        return m;
+      };
+    if (w.some(x => Math.abs(x) > 1e-4)) morphs.push({name: MORPH[name], keys: pickKeyFrames(N, err, 0.005).map(i => ({frame: i, w: w[i]}))});
+  }
+  // ---- 書き出し ----
+  const nb = bones.reduce((s, b) => s + b.keys.length, 0), nm = morphs.reduce((s, m) => s + m.keys.length, 0),
+    ikNames = ['左足ＩＫ', '右足ＩＫ', '左つま先ＩＫ', '右つま先ＩＫ'],
+    size = 30 + 20 + 4 + nb * 111 + 4 + nm * 23 + 4 + 4 + 4 + 4 + 9 + ikNames.length * 21 + 1 - 1,
+    out = new Uint8Array(size + 8), dv = new DataView(out.buffer);
+  let o = 0;
+  const put = bs => { out.set(bs, o); o += bs.length; }, u32 = v => { dv.setUint32(o, v, true); o += 4; }, f32 = v => { dv.setFloat32(o, v, true); o += 4; };
+  put(sjisBytes('Vocaloid Motion Data 0002', 30));
+  put(sjisBytes(modelName, 20));
+  u32(nb);
+  const ip = Uint8Array.from({length: 64}, (_, i) => (i % 16 < 8 ? 20 : 107));   // 直線補間（毎フレームに近い焼き込みなので十分）
+  for (const b of bones) {
+    const nameB = sjisBytes(b.name, 15);
+    for (const k of b.keys) {
+      put(nameB);
+      u32(k.frame);
+      f32(k.pos[0]); f32(k.pos[1]); f32(k.pos[2]);
+      f32(-k.q.x); f32(-k.q.y); f32(k.q.z); f32(k.q.w);   // 右手系→左手系：x,yを反転
+      put(ip);
+    }
+  }
+  u32(nm);
+  for (const m of morphs) {
+    const nameB = sjisBytes(m.name, 15);
+    for (const k of m.keys) { put(nameB); u32(k.frame); f32(k.w); }
+  }
+  u32(0); u32(0); u32(0);   // カメラ・照明・セルフシャドウ
+  u32(1);                   // 表示・IKの切り替え：0フレームで足IKを全てオフ（FKの脚の回転を効かせる）
+  u32(0); out[o++] = 1; u32(ikNames.length);
+  for (const n of ikNames) { put(sjisBytes(n, 20)); out[o++] = 0; }
+  return {bytes: out.slice(0, o), info: {bones: bones.length, boneKeys: nb, morphKeys: nm, frames: N}};
+}
+/** VRM変換の設定ダイアログ。ボーンの自動割り当てを確認・修正し、モデル名・作者・ライセンスを決める。戻り値：{name, author, license, map} / キャンセルはnull。 */
+function vrmDialog(json, base, auto, warn, opts = {}) {
+  return new Promise(resolve => {
+    const {parent, order} = glbHierarchy(json),
+      joints = new Set();
+    (json.skins || []).forEach(s => (s.joints || []).forEach(j => joints.add(j)));
+    const cand = order.filter(i => !joints.size || joints.has(i)),
+      vals = {...auto},
+      ov = document.createElement('div'),
+      box = document.createElement('div'),
+      mk = (tag, text, cls) => {
+        const e = document.createElement(tag);
+        if (text) e.textContent = text;
+        if (cls) e.className = cls;
+        return e;
+      },
+      field = (label, el) => {
+        const l = mk('label');
+        l.append(mk('span', label), el);
+        return l;
+      },
+      row = slot => {
+        const sel = document.createElement('select');
+        sel.append(new Option('— なし —', ''));
+        for (const i of cand) sel.append(new Option('　'.repeat(Math.min(depthOf(i), 8)) + (json.nodes[i].name || 'node' + i), String(i)));
+        if (vals[slot] != null) sel.value = String(vals[slot]);
+        const refresh = () => sel.classList.toggle('bad', VRM_REQUIRED.includes(slot) && vals[slot] == null);
+        sel.onchange = () => {
+          vals[slot] = sel.value === '' ? undefined : +sel.value;
+          refresh();
+        };
+        refresh();
+        return field(slot + (VRM_JP[slot] ? '（' + VRM_JP[slot] + '）' : '') + (VRM_REQUIRED.includes(slot) ? ' *' : ''), sel);
+      },
+      {depth} = glbHierarchy(json),
+      depthOf = i => depth[i],
+      nameIn = mk('input'),
+      authorIn = mk('input'),
+      licSel = document.createElement('select'),
+      msg = mk('div', warn || '', 'msg'),
+      opt = document.createElement('details'),
+      close = v => {
+        ov.remove();
+        resolve(v);
+      };
+    ov.id = 'vrmDlg';
+    box.className = 'box';
+    nameIn.value = base;
+    try {
+      authorIn.value = localStorage.getItem('mvVrmAuthor') || '';
+    } catch {}
+    authorIn.placeholder = '作者名';
+    licSel.append(new Option('自分だけが使用（非商用・再配布不可）', 'personal'), new Option('誰でも自由に使用可（CC0）', 'cc0'));
+    opt.append(mk('summary', '任意のボーン（胸・首・肩・目・つま先・指）'));
+    let built = false;
+    opt.ontoggle = () => {
+      if (!opt.open || built) return;
+      built = true;
+      VRM_OPTIONAL.forEach(s => opt.append(row(s)));
+    };
+    const ok = mk('button', opts.pmx ? 'PMXを保存' : 'VRMを保存', 'primary'),
+      cancel = mk('button', 'キャンセル'),
+      btns = mk('div', '', 'btns');
+    ok.onclick = () => {
+      const err = vrmValidate(vals, parent);
+      if (err) {
+        msg.textContent = err;
+        return;
+      }
+      try {
+        localStorage.setItem('mvVrmAuthor', authorIn.value.trim());
+      } catch {}
+      if (opts.pmx) return close({map: vals});
+      close({name: nameIn.value.trim() || base, author: authorIn.value.trim() || 'unknown', license: licSel.value, map: vals});
+    };
+    cancel.onclick = () => close(null);
+    btns.append(cancel, ok);
+    box.append(
+      mk('b', opts.pmx ? 'MMD（PMX）に変換' : 'VRMに変換'),
+      ...(opts.pmx ? [] : [field('モデル名', nameIn), field('作者', authorIn), field('ライセンス', licSel)]),
+      mk('div', opts.pmx ? 'MMDの標準ボーン名に付け替え、センター・全ての親・足IKを追加します。物理（剛体）は作りません。元のモデルの利用規約も確認してください。' : '元のモデルの利用規約も確認してください。揺れ物（髪・服の物理）は引き継がれません。', 'note'),
+      mk('b', 'ボーンの割り当て（* は必須。自動で割り当て済み）')
+    );
+    VRM_REQUIRED.forEach(s => box.append(row(s)));
+    box.append(opt, msg, btns);
+    ov.append(box);
+    document.body.append(ov);
+  });
+}
+/** 保存用のGLBバイト列を用意する。VRM/GLBは読み込んだファイルそのもの、MMD/FBX/OBJはGLBに書き出す。 */
+async function currentGlbBuffer() {
+  return isVrmLike() ? await currentModelFile.arrayBuffer() : await exportGLB();
+}
+/** MMD(PMX)で保存する。MMDモデルはそのまま。VRMはヒューマノイド情報から、GLB/FBX/OBJはボーンを自動割り当て（確認画面あり）してPMXのZIPにする。 */
+async function savePmx(base) {
+  if (mmdMesh) {
+    downloadBlob(currentModelFile, currentModelFile.name);
+    setStatus('すでにMMDです。そのまま保存しました');
+    return;
+  }
+  let hm = {};
+  if (vrm) {
+    for (const s of [...VRM_REQUIRED, ...VRM_OPTIONAL]) {
+      const n = vrm.humanoid.getRawBoneNode(s);
+      if (n) hm[s] = n;
+    }
+  } else {
+    const {json, list} = sceneAsJson(loadedObject),
+      res = await vrmDialog(json, base, vrmAutoMap(json), '', {pmx: true});
+    if (!res) {
+      setStatus('PMX変換をキャンセルしました');
+      return;
+    }
+    for (const [k, v] of Object.entries(res.map)) if (v != null) hm[k] = list[v];
+  }
+  setStatus('PMXを書き出し中…');
+  const {blob, info} = await buildPmxZip(loadedObject, hm, base);
+  downloadBlob(blob, base + '_pmx.zip');
+  setStatus(base + '_pmx.zip を保存しました（ボーン' + info.bones + '・頂点' + info.vertices + '・材質' + info.materials + '・テクスチャ' + info.textures + '・モーフ' + info.morphs + '）');
+}
+/** モデルを保存する。fmt：'glb' / 'vrm' / 'mmd'。VRM→GLBは拡張を外し、GLB・MMD等→VRMはボーンを割り当てて変換する。 */
+async function saveModel(fmt) {
   if (!loadedObject || !currentModelFile) {
     setStatus('先にモデルを読み込んでください');
     return;
   }
   const base = currentModelFile.name.replace(/\.[^.]+$/, '');
-  if (isVrmLike()) {
-    downloadBlob(currentModelFile, currentModelFile.name);
-    setStatus(currentModelFile.name + ' を保存しました（そのまま）');
-    return;
-  }
-  setStatus('GLBに変換中…');
+  setStatus('変換中…');
   try {
-    const buf = await exportGLB();
-    downloadBlob(new Blob([buf], {type: 'model/gltf-binary'}), base + '.glb');
-    setStatus(base + '.glb を保存しました（VRM形式への変換は未対応のためGLB）');
+    if (fmt === 'mmd') return await savePmx(base);
+    const buf = await currentGlbBuffer(),
+      {json} = glbParse(buf),
+      hasVrm = glbHasVrm(json);
+    if (fmt === 'glb') {
+      if (hasVrm) downloadBlob(vrmToGlb(buf), base + '.glb');
+      else downloadBlob(isVrmLike() ? currentModelFile : new Blob([buf], {type: 'model/gltf-binary'}), isVrmLike() ? currentModelFile.name : base + '.glb');
+      setStatus(base + '.glb を保存しました（' + (hasVrm ? 'VRM拡張を外しました' : isVrmLike() ? 'そのまま' : '変換') + '）');
+      return;
+    }
+    if (hasVrm) {
+      downloadBlob(isVrmLike() ? currentModelFile : new Blob([buf]), isVrmLike() ? currentModelFile.name : base + '.vrm');
+      setStatus('すでにVRMです。そのまま保存しました');
+      return;
+    }
+    const auto = vrmAutoMap(json),
+      res = await vrmDialog(json, base, auto, vrmFacingWarn(json, auto));
+    if (!res) {
+      setStatus('VRM変換をキャンセルしました');
+      return;
+    }
+    const blob = glbToVrm(buf, res);
+    downloadBlob(blob, base + '.vrm');
+    setStatus(base + '.vrm を保存しました（VRM 1.0・' + formatBytes(blob.size) + '）');
   } catch (e) {
     console.error(e);
-    setStatus('GLBへの書き出しに失敗：' + (e?.message || e));
+    setStatus('モデルの保存に失敗：' + (e?.message || e));
   }
 }
-byId('save').onclick = e =>
+byId('save').onclick = e => {
+  const isVrm = !!vrm || /\.vrm$/i.test(currentModelFile?.name || ''),
+    loaded = !!loadedObject && !!currentModelFile;
   showPopup(e.currentTarget, '保存', [
+    {label: 'モデルを保存：GLB（' + (!loaded ? '未読込' : isVrm ? 'VRM拡張を外す' : isVrmLike() ? 'そのまま' : '変換') + '）', fn: () => saveModel('glb')},
+    {label: 'モデルを保存：VRM（' + (!loaded ? '未読込' : isVrm ? 'そのまま' : 'ボーンを割り当てて変換') + '）', fn: () => saveModel('vrm')},
+    {label: 'モデルを保存：MMD（' + (!loaded ? '未読込' : mmdMesh ? 'そのまま' : 'PMXに変換・ZIP') + '）', fn: () => saveModel('mmd')},
     {
-      label:
-        'モデルを保存（' +
-        (!loadedObject ? '未読込' : isVrmLike() ? 'VRM/GLBをそのまま' : 'GLBに変換') +
-        '）',
-      fn: saveModel
+      label: 'モーションを保存：VRMA（' + (!currentMotionFile ? '未読込' : /\.vmd$/i.test(currentMotionFile.name) ? 'VMDから変換・要VRM' : 'そのまま') + '）',
+      fn: () => saveMotion('vrma')
     },
     {
-      label:
-        'モーションを保存（' +
-        (!currentMotionFile
-          ? '未読込'
-          : /\.vmd$/i.test(currentMotionFile.name)
-            ? 'VRMAに変換'
-            : 'VRMAをそのまま') +
-        '）',
-      fn: saveMotion
+      label: 'モーションを保存：VMD（' + (!currentMotionFile ? '未読込' : /\.vmd$/i.test(currentMotionFile.name) ? 'そのまま' : 'VRMAから変換') + '）',
+      fn: () => saveMotion('vmd')
     }
   ]);
+};
 
 // ---- モーション：VRMA/VMD を VRM/MMD のどちらにも適用 ----
 // MMD：three.jsの_optimizeIKはIKリンクのenabledをモデルのジオメトリ側に書き込む（物理ONでfalseになる）。新しいhelperへ持ち越されるので毎回戻す
@@ -2496,15 +3698,15 @@ function fixMorphNames(vmd, mesh) {
   return {total: vmdMorphNames.size, ok: okCount, fixed: fixedCount};
 }
 const APP_VERSION = '1.00',
-  BUILD_DATE = '2026-10-19';
+  BUILD_DATE = '2026-11-02';
 byId('ver').textContent = 'v' + APP_VERSION + '・' + BUILD_DATE;
 console.info('3D Model Viewer v' + APP_VERSION + ' (build ' + BUILD_DATE + ')');
 // ---- つなぎ補間：リスト連続再生（次へ進む・繰り返し）のときだけ、前の最後の姿勢→次の最初の姿勢をなめらかにつなぐ ----
 // 差が大きすぎる（enter/exitのようにかけ離れた）場合は補間しない。しきい値は下の定数で調整。
 const BLEND_TOP_DEG = 60,
   BLEND_MAX_DEG = 120,
-  BLEND_MIN_SEC = 0.02,
-  BLEND_MAX_SEC = 0.02;
+  BLEND_MIN_SEC = 0.2,
+  BLEND_MAX_SEC = 0.6;
 const blendTmpQuat = new THREE.Quaternion(),
   blendTmpPos = new THREE.Vector3();
 /** つなぎ補間の対象ボーン一覧を返す。 */
@@ -2533,22 +3735,28 @@ function blendStep(dt) {
       .sort((a, b) => b - a);
     const topCount = Math.min(8, angles.length),
       topAverageDeg = topCount ? angles.slice(0, topCount).reduce((a, b) => a + b, 0) / topCount : 0; // 大きくずれた上位8ボーンの平均
-    if (topCount && topAverageDeg <= BLEND_TOP_DEG && angles[0] <= BLEND_MAX_DEG)
+    if (topCount && topAverageDeg <= BLEND_TOP_DEG && angles[0] <= BLEND_MAX_DEG) {
+      // 新しいモーションは最初から実速度で再生し、前の姿勢との差（オフセット）だけを減衰させる
+      for (const snapshot of from) {
+        snapshot.dq = snapshot.q.clone().multiply(snapshot.n.quaternion.clone().invert()); // dq * 新姿勢 = 前の姿勢
+        snapshot.dp = snapshot.p.clone().sub(snapshot.n.position);
+      }
       activeBlend = {
         from,
         t: 0,
         dur: THREE.MathUtils.clamp(BLEND_MIN_SEC + topAverageDeg * 0.006, BLEND_MIN_SEC, BLEND_MAX_SEC)
       };
+    }
   }
   if (!activeBlend) return;
   activeBlend.t += dt;
   const progress = Math.min(1, activeBlend.t / activeBlend.dur),
     w = progress * progress * (3 - 2 * progress);
+  const remain = 1 - w; // 残りのオフセット量（1→0）
   for (const snapshot of activeBlend.from) {
-    blendTmpQuat.copy(snapshot.n.quaternion);
-    snapshot.n.quaternion.copy(snapshot.q).slerp(blendTmpQuat, w);
-    blendTmpPos.copy(snapshot.n.position);
-    snapshot.n.position.lerpVectors(snapshot.p, blendTmpPos, w);
+    blendTmpQuat.identity().slerp(snapshot.dq, remain);
+    snapshot.n.quaternion.premultiply(blendTmpQuat); // 現在のモーションの上にオフセットだけ足す（動きは鈍らない）
+    snapshot.n.position.addScaledVector(snapshot.dp, remain);
   }
   if (progress >= 1) activeBlend = null;
 }
@@ -2823,10 +4031,6 @@ byId('reset').onclick = () => {
   byId('zoomText').textContent = '1.0×';
   updateCamera();
 };
-byId('home').onclick = () => {
-  yaw = 0;
-  updateCamera();
-};
 
 /** 画面上の移動量(px)を注視点の平行移動へ変換する。 */
 function panBy(dx, dy) {
@@ -2989,6 +4193,7 @@ function animate() {
   } // MMD：helper.update が骨を巻き戻すので、曲げ・視線は更新の後に入れる
   if (physicsHoldSec > 0) physicsHoldSec -= dt;
   checkMotionEnd();
+  if (mug.on) mugTick();
   renderer.render(scene, camera);
 }
 // ---- メニューの縦置き／横置き＋ドラッグでサイズ変更 ----
