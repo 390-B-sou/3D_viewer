@@ -1,5 +1,7 @@
 # 3D Model Viewer
 
+日本語 | [English](README.en.md)
+
 ## 概要
 
 ブラウザーだけで動作する、単一HTMLの3Dモデルビューアーです。インストール不要で、対応ブラウザーがあれば Windows・macOS・Linux・iPhone・Android など、OSを問わず利用できます（外部ライブラリの取得のため、オンライン環境が必要です）。
