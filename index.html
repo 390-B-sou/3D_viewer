@@ -51,8 +51,8 @@ details#hist{margin-bottom:8px;border:1px solid var(--line);border-radius:11px;b
 .lrepb{flex:none;min-width:48px;min-height:36px;padding:7px 8px;text-align:center;color:#9fe3d8;font-variant-numeric:tabular-nums}
 .hitem.on .hsel{background:#244a49;border-color:#39716b}
 
-details#plist,details#morphBox,details#groundBox,details#viewBox{margin-bottom:8px;border:1px solid var(--line);border-radius:11px;background:#1a1d26}
-#plist summary,#morphBox summary,#groundBox summary,#viewBox summary{padding:9px 12px;cursor:pointer;font-size:13px;color:#cfd6e2}
+details#plist,details#morphBox,details#groundBox,details#viewBox,details#springBox{margin-bottom:8px;border:1px solid var(--line);border-radius:11px;background:#1a1d26}
+#plist summary,#morphBox summary,#groundBox summary,#viewBox summary,#springBox summary{padding:9px 12px;cursor:pointer;font-size:13px;color:#cfd6e2}
 .lbody{padding:0 8px 8px}
 .lhead{display:flex;gap:6px;align-items:center;margin-bottom:6px}
 select{flex:1;min-width:0;background:#262a35;color:#f4f5f8;border:1px solid var(--line);border-radius:11px;padding:8px 10px;font:inherit;min-height:38px}
@@ -107,6 +107,7 @@ input[type=search]{-webkit-user-select:text;user-select:text}
     <label class="pick">モーションを開く<input id="motionFile" type="file"></label>
     <label class="pick chk"><input type="checkbox" id="loop" checked><span>ループ</span></label>
     <label class="pick chk"><input type="checkbox" id="physics" checked><span>物理</span></label>
+    <label class="pick chk" title="FBX・素のGLBを自動でVRM化したとき、髪・しっぽ・耳などの揺れものを推定して後付けします（切り替えるとモデルを読み込み直します）"><input type="checkbox" id="fbxSpring" checked><span>FBXも含める</span></label>
     <label class="pick chk"><input type="checkbox" id="gaze"><span>視線</span></label>
     <label class="pick chk"><input type="checkbox" id="restore" checked><span>起動時に復帰</span></label>
     <button id="reset">視点リセット</button>
@@ -165,10 +166,23 @@ input[type=search]{-webkit-user-select:text;user-select:text}
     <div class="rangebox">尻 <span id="mhipText">10%</span><input id="mhip" type="range" min="0" max="25" step="1" value="10"></div>
   </div>
   </details>
+  <details id="springBox"><summary>揺れ調整（FBXの自動検出）</summary>
+  <div class="row">
+    <div class="rangebox">硬さ <span id="spStiffText">1.00</span><input id="spStiff" type="range" min="0" max="3" step="0.05" value="1"></div>
+    <div class="rangebox">重力 <span id="spGravText">0.10</span><input id="spGrav" type="range" min="0" max="1.5" step="0.05" value="0.1"></div>
+    <div class="rangebox">減衰 <span id="spDragText">0.40</span><input id="spDrag" type="range" min="0" max="1" step="0.05" value="0.4"></div>
+    <div class="rangebox">当たり半径 <span id="spHitText">1.0cm</span><input id="spHit" type="range" min="0" max="0.05" step="0.005" value="0.01"></div>
+  </div>
+  <div class="row">
+    <label class="pick chk"><input type="checkbox" id="spCol" checked><span>体の当たり判定</span></label>
+    <button id="spReset">初期値に戻す</button>
+  </div>
+  <div class="muted" id="spInfo">FBXを読み込むと、検出した揺れものがここに出ます</div>
+  </details>
   <div class="muted">
-    対応：GLB / VRM / MMDモデル（PMX・PMDを含むZIP）。モーション：VRMA・VMD（モデルの種類に関係なく適用）。
+    対応：GLB / VRM / MMDモデル（PMX・PMDを含むZIP）。モーション：VRMA・VMD・Unity の Humanoid .anim（テキスト形式。筋肉値から変換。モデルの種類に関係なく適用）。
     モデルは読み込み直後、そのモデル本来のポーズ（T/Aポーズ）で表示します。VMD→VRMは足IKを2ボーンIKで近似します（接地や足先の細かな動きは元と差が出ます）。
-    外部ライブラリの読み込みにインターネット接続が必要です。FBX・素のGLBはボーンを自動でVRMに変換してモーションを適用します（ボーンを判別できない場合は表示のみ）。モデルとモーションは独立して読み込めます（モデルを替えても選択中のモーションを再適用）。履歴はこのブラウザ内（IndexedDB）に各10件まで保存されます。リストは履歴とは別に保存され、10件を超えても消えません。「ループ」ON：単体は繰り返し、リストは最後まで再生したら最初に戻ります（OFFは1回だけ再生して最後のポーズで止まります）。保存：モデルはGLB／VRM／MMDを選べます（VRM→GLBは拡張を外すだけ、GLB・MMD・FBX→VRMはボーンを自動で割り当て、確認画面で直せます。VRM・GLB・FBX→MMDはPMXのZIPに変換します。揺れ物・物理は引き継がれません）。モーションはVRMA／VMDを選べます（VMD→VRMAはVRMモデルが必要。VRMA→VMDはモデル不要で、足はFK・足IKはオフで書き出します）。
+    外部ライブラリの読み込みにインターネット接続が必要です。FBX・素のGLBはボーンを自動でVRMに変換してモーションを適用します（ボーンを判別できない場合は表示のみ）。髪・しっぽ・耳などの揺れものは、階層とスキンの重みから推定して後付けします（「物理」と「FBXも含める」がON。強さは「揺れ調整」で変更）。モデルとモーションは独立して読み込めます（モデルを替えても選択中のモーションを再適用）。履歴はこのブラウザ内（IndexedDB）に各10件まで保存されます。リストは履歴とは別に保存され、10件を超えても消えません。「ループ」ON：単体は繰り返し、リストは最後まで再生したら最初に戻ります（OFFは1回だけ再生して最後のポーズで止まります）。保存：モデルはGLB／VRM／MMDを選べます（VRM→GLBは拡張を外すだけ、GLB・MMD・FBX→VRMはボーンを自動で割り当て、確認画面で直せます。VRM・GLB・FBX→MMDはPMXのZIPに変換します。揺れ物・物理は引き継がれません）。モーションはVRMA／VMDを選べます（VMD→VRMAはVRMモデルが必要。VRMA→VMDはモデル不要で、足はFK・足IKはオフで書き出します）。
   </div>
 </div></section>
 <div id="popup" hidden></div>
@@ -222,8 +236,8 @@ import {FBXLoader} from 'three/addons/loaders/FBXLoader.js';
 import {OBJLoader} from 'three/addons/loaders/OBJLoader.js';
 import {MTLLoader} from 'three/addons/loaders/MTLLoader.js';
 import {MMDAnimationHelper} from 'three/addons/animation/MMDAnimationHelper.js';
-import {VRM, VRMHumanoid, VRMExpression, VRMExpressionManager, VRMExpressionMorphTargetBind, VRMLoaderPlugin, VRMUtils} from '@pixiv/three-vrm';
-import {VRMAnimationLoaderPlugin, createVRMAnimationClip} from '@pixiv/three-vrm-animation';
+import {VRM, VRMHumanoid, VRMExpression, VRMExpressionManager, VRMExpressionMorphTargetBind, VRMLoaderPlugin, VRMUtils, VRMSpringBoneManager, VRMSpringBoneJoint, VRMSpringBoneCollider, VRMSpringBoneColliderShapeCapsule} from '@pixiv/three-vrm';
+import {VRMAnimation, VRMAnimationLoaderPlugin, createVRMAnimationClip} from '@pixiv/three-vrm-animation';
 import {unzipSync, zipSync, gunzipSync} from 'fflate';
 
 // ---- 1. シーン・カメラ・照明・状態変数 ----
@@ -266,6 +280,7 @@ let playback = {mixer: null, action: null, done: false}; // 再生状態 {mixer,
 let listPlayback = null; // リスト再生の現在位置 {listId, key, n}。単体再生では null
 let savedLists = []; // 保存済みの再生リスト
 let selectedListId = null; // 選択中リストのID
+let autoSpring = null; // FBX等の自動VRM化で後付けした揺れもの {manager, joints, group, colliders, roots}。無ければ null
 let lastModelFile = null; // 最後に読み込んだモデルのファイル（Unityパッケージは展開後のZIP）。ボーン割り当てを直したあとの再読み込みに使う
 let autoVrmOrig = null; // FBX等を自動でVRM化したとき、元のモデル本体（保存・PMX変換はこちらを使う）。通常は null
 let vrmSpringBoneManager = null; // VRMの揺れもの(SpringBone)管理。物理OFF時は vrm 側から外す
@@ -687,7 +702,7 @@ function clearModel() {
         }
     });
   }
-  loadedObject = vrm = mmdMesh = mmdHelper = vrmMixer = fingerCurlTargets = mmdPhysics = autoVrmOrig = null;
+  loadedObject = vrm = mmdMesh = mmdHelper = vrmMixer = fingerCurlTargets = mmdPhysics = autoVrmOrig = autoSpring = null;
   morphList = [];
   buildExpressionUI();
   archiveFiles.clear();
@@ -903,6 +918,130 @@ async function applyUnityMaterials(obj, spec) {
   obj.traverse(o => o.isMesh && meshes.push(o));
   for (const o of meshes) o.material = Array.isArray(o.material) ? await Promise.all(o.material.map(make)) : await make(o.material);
 }
+// ---- FBX等の自動VRM化モデルへの揺れもの（スプリング）の後付け ----
+/* FBXにはUnityの揺れ設定（DynamicBone・PhysBone・Magica等）が入っていないので、「人型ボーンの先にぶらさがる、スキンの重みが付いた非人型ボーンの連なり」（髪・スカート・しっぽ・耳・リボンなど）を階層から推定し、標準の設定で作る。 */
+const SPRING_DEFAULTS = {stiff: 1.0, grav: 0.1, drag: 0.4, hit: 0.01, col: true};
+function springPrefs() {
+  const num = (id, d) => { const e = document.getElementById(id); const v = e ? parseFloat(e.value) : NaN; return isFinite(v) ? v : d; };
+  const c = document.getElementById('spCol');
+  return {stiff: num('spStiff', SPRING_DEFAULTS.stiff), grav: num('spGrav', SPRING_DEFAULTS.grav), drag: num('spDrag', SPRING_DEFAULTS.drag), hit: num('spHit', SPRING_DEFAULTS.hit), col: c ? c.checked : SPRING_DEFAULTS.col};
+}
+/** 現在のスライダー値を揺れ全体に反映する（モデル再読み込み不要）。 */
+function applySpringSettings(sp = autoSpring) {
+  if (!sp) return;
+  const p = springPrefs();
+  for (const j of sp.joints) {
+    j.settings.stiffness = p.stiff;
+    j.settings.gravityPower = p.grav;
+    j.settings.dragForce = p.drag;
+    j.settings.hitRadius = p.hit;
+    j.colliderGroups = p.col ? [sp.group] : [];
+  }
+}
+/** 揺れものを検出して VRMSpringBoneManager を作る。見つからなければ null。bodyH＝身長(m)。 */
+function buildAutoSpring({orig, bones, appendDst, bodyH}) {
+  const human = new Set(Object.values(bones).map(b => b.node)),
+    isDup = b => !!(b.parent && b.parent.isBone && b.parent.name === b.name),   // FBXLoaderが共有ボーンを同名の入れ子で複製したもの
+    kids = b => b.children.filter(c => c.isBone && !isDup(c)),
+    weighted = new Set();
+  orig.traverse(m => {
+    if (!m.isSkinnedMesh) return;
+    const si = m.geometry.attributes.skinIndex, sw = m.geometry.attributes.skinWeight, used = new Uint8Array(m.skeleton.bones.length);
+    for (let i = 0; i < si.count; i++) for (let k = 0; k < 4; k++) if (sw.getComponent(i, k) > 0.001) used[si.getComponent(i, k)] = 1;
+    used.forEach((u, idx) => {
+      if (!u) return;
+      let b = m.skeleton.bones[idx];
+      while (isDup(b)) b = b.parent;
+      weighted.add(b);
+    });
+  });
+  const memoW = new Map(), memoH = new Map(),
+    hasWeight = b => { if (!memoW.has(b)) memoW.set(b, weighted.has(b) || kids(b).some(hasWeight)); return memoW.get(b); },
+    hasHuman = b => { if (!memoH.has(b)) memoH.set(b, human.has(b) || kids(b).some(hasHuman)); return memoH.get(b); },
+    size = b => 1 + kids(b).reduce((s, c) => s + size(c), 0),
+    EXCL = /(^|[^a-z])ik([^a-z]|$)|ＩＫ|dummy|shadow|cancel|キャンセル|捩|ねじ|twist|roll|ctrl|control|helper|肩[pcＰＣ]|eye|目|瞳|眼|jaw|顎|tongue|舌|歯|tooth/i,
+    ok = b => b.isBone && !isDup(b) && !human.has(b) && !appendDst.has(b) && !EXCL.test(b.name) && hasWeight(b) && !hasHuman(b),
+    slots = ['head', 'neck', 'upperChest', 'chest', 'spine', 'hips'].map(k => bones[k]?.node).filter(Boolean),
+    // 揺れの付け根にできる親：体幹・頭の人型ボーン、またはその直下にある構造用の非人型ボーン（MMDの「下半身」など。IK・捩り・キャンセル用は除く）
+    nearHuman = b => { while (b && !human.has(b)) b = b.parent; return b; },
+    parentOk = p => slots.includes(p) || (p.isBone && !human.has(p) && hasHuman(p) && !EXCL.test(p.name) && slots.includes(nearHuman(p.parent))),
+    roots = [];
+  orig.traverse(b => {
+    if (ok(b) && b.parent && parentOk(b.parent)) roots.push(b);
+  });
+  if (!roots.length) return null;
+  const joints = [], treeBones = [], p = springPrefs();
+  const walk = b => { treeBones.push(b); kids(b).filter(ok).forEach(walk); };
+  roots.forEach(walk);
+  if (treeBones.length > 600) return null;   // 想定外に多い（全身の服など）場合は誤検出とみなして作らない
+  orig.updateWorldMatrix(true, true);
+  const manager = new VRMSpringBoneManager(), group = {colliders: [], name: 'auto'}, wScale = b => new THREE.Vector3().setFromMatrixScale(b.matrixWorld).x || 1;
+  for (const b of treeBones) {
+    const ks = kids(b).filter(ok).sort((x, y) => size(y) - size(x));
+    let child = ks[0] || null;
+    if (!child) {   // 末端：骨の向きに仮の“先端”を足す（長さ＝根元からの距離、最低3cm）
+      const len = Math.max(b.position.length(), 0.03 / wScale(b));
+      if (b.position.lengthSq() < 1e-18) continue;
+      const dirLocal = b.position.clone().normalize().applyQuaternion(b.quaternion.clone().invert());
+      child = new THREE.Object3D();
+      child.name = 'SpringTail';
+      child.visible = false;
+      child.position.copy(dirLocal).multiplyScalar(len);
+      b.add(child);
+    }
+    const joint = new VRMSpringBoneJoint(b, child, {stiffness: p.stiff, gravityPower: p.grav, dragForce: p.drag, hitRadius: p.hit}, [group]);
+    manager.addJoint(joint);
+    joints.push(joint);
+  }
+  orig.updateWorldMatrix(true, true);
+  // ---- 体の当たり判定（カプセル）。半径は身長に対する比率 ----
+  const H = bodyH, W = k => bones[k]?.node, colliders = [],
+    capsule = (a, b, frac) => {
+      const A = W(a), B = W(b);
+      if (!A || !B) return;
+      const tail = B.getWorldPosition(new THREE.Vector3()).applyMatrix4(new THREE.Matrix4().copy(A.matrixWorld).invert()),
+        col = new VRMSpringBoneCollider(new VRMSpringBoneColliderShapeCapsule({offset: new THREE.Vector3(), tail, radius: frac * H}));
+      col.visible = false;
+      col.userData.r0 = frac * H;
+      A.add(col);
+      colliders.push(col);
+    };
+  const trunk = ['hips', 'spine', 'chest', 'upperChest', 'neck', 'head'].filter(k => W(k));
+  for (let i = 0; i + 1 < trunk.length; i++) capsule(trunk[i], trunk[i + 1], trunk[i] === 'neck' ? 0.035 : trunk[i] === 'hips' ? 0.085 : 0.075);
+  for (const s of ['left', 'right']) {
+    capsule(s + 'UpperLeg', s + 'LowerLeg', 0.06);
+    capsule(s + 'LowerLeg', s + 'Foot', 0.042);
+    capsule(s + 'UpperArm', s + 'LowerArm', 0.035);
+    capsule(s + 'LowerArm', s + 'Hand', 0.03);
+  }
+  const headN = W('head');
+  if (headN) {   // 頭：頭ボーンから真上へ伸ばしたカプセル
+    const inv = new THREE.Matrix4().copy(headN.matrixWorld).invert(),
+      up = headN.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 0.1 * H, 0)).applyMatrix4(inv),
+      col = new VRMSpringBoneCollider(new VRMSpringBoneColliderShapeCapsule({offset: new THREE.Vector3(), tail: up, radius: 0.06 * H}));
+    col.visible = false;
+    col.userData.r0 = 0.06 * H;
+    headN.add(col);
+    colliders.push(col);
+  }
+  group.colliders = colliders;
+  manager.setInitState();
+  // 静止姿勢で揺れボーンの先端が当たり判定にめり込んでいたら、その当たり判定を縮める（髪や服が最初から押し出されないように）
+  const tmp = new THREE.Vector3(), pos = new THREE.Vector3();
+  for (const col of colliders) {
+    col.updateWorldMatrix(true, false);
+    let r = col.shape.radius;
+    for (const j of joints) {
+      j.child.getWorldPosition(pos);
+      const dist = col.shape.calculateCollision(col.matrixWorld, pos, p.hit, tmp);   // 表面までの距離（負＝めり込み）
+      if (dist < 0) r = Math.min(r, col.shape.radius + dist - 0.002);
+    }
+    col.shape.radius = Math.max(0, r);
+  }
+  group.colliders = colliders.filter(c => c.shape.radius >= 0.4 * c.userData.r0);   // 縮めすぎた当たり判定は使わない
+  return {manager, joints, group, colliders: group.colliders, roots: roots.map(r => r.name)};
+}
+
 /** FBX・素のGLBにスキンメッシュ（ボーン）があれば、書き出し・再読み込みなしで three-vrm の VRM オブジェクトを組み立てて vrm として扱う（VRMA/VMDモーションを適用できるようにする）。
  *  元のモデルのメッシュ・材質・ボーンはそのまま使い、人型ボーンの対応表・正規化ボーン・表情（モーフ）だけを足す。
  *  ボーンを自動で割り当てられない場合は表示のみ（元のまま）。成功したら true。 */
@@ -1027,6 +1166,17 @@ async function attachAutoVrm(file) {
         for (const a of appends) a.dst.quaternion.copy(a.src.quaternion).multiply(a.srcRestInv).multiply(a.dstRest);
       };
     }
+    // ---- 揺れもの（スプリング）：「FBXも含める」ONのとき、髪・しっぽ・耳などを推定して後付け ----
+    let spring = null;
+    if (document.getElementById('fbxSpring')?.checked !== false) {
+      try {
+        spring = buildAutoSpring({orig, bones, appendDst: new Set(appends.map(a => a.dst)), bodyH: bodyH * unitScale});
+      } catch (e) {
+        console.warn('buildAutoSpring', e);
+      }
+    }
+    if (spring) newVrm.springBoneManager = spring.manager;   // 物理の切替（applyVrmPhysics）は読み込み後にこの管理を使う
+    autoSpring = spring;
     autoVrmOrig = orig;
     vrm = newVrm;
     loadedObject = scene;
@@ -1034,10 +1184,12 @@ async function attachAutoVrm(file) {
     fitObjectToView(scene);
     const fingerSlots = Object.keys(map).filter(k => /(Thumb|Index|Middle|Ring|Little)/.test(k)).length,
       handKids = (json.nodes[map.leftHand]?.children || []).map(c => json.nodes[c].name);
-    console.info('autoVrm', {bodyH, unitScale, rotated, appends: appends.map(a => a.src.name + '→' + a.dst.name), expressions: expressionManager.expressions.length,
+    const spInfo = document.getElementById('spInfo');
+    if (spInfo) spInfo.textContent = spring ? '検出：' + spring.roots.length + '系統・' + spring.joints.length + '関節（' + spring.roots.slice(0, 6).join('・') + (spring.roots.length > 6 ? '…' : '') + '）／当たり判定 ' + spring.colliders.length + '個' : '検出なし';
+    console.info('autoVrm', {bodyH, unitScale, rotated, spring: spring?.roots, appends: appends.map(a => a.src.name + '→' + a.dst.name), expressions: expressionManager.expressions.length,
       map: Object.fromEntries(Object.entries(map).map(([k, v]) => [k, json.nodes[v].name]))});
     setStatus(file.name + ' を表示中（ボーンを自動でVRM化：指 ' + fingerSlots + '/30・表情 ' + expressionManager.expressions.length + (unitScale !== 1 ? '・単位×' + unitScale : '') + (rotated ? '・向き補正' : '') + (tPosed ? '・Tポーズ化' : '') +
-      (appends.length ? '・付与' + appends.length : '') + (fingerSlots < 30 ? '　手の直下：' + (handKids.slice(0, 6).join(', ') || '(なし)') : '') + '）');
+      (appends.length ? '・付与' + appends.length : '') + (spring ? '・揺れ' + spring.joints.length + '関節' : '') + (fingerSlots < 30 ? '　手の直下：' + (handKids.slice(0, 6).join(', ') || '(なし)') : '') + '）');
     return true;
   } catch (e) {
     console.warn('attachAutoVrm', e);
@@ -1923,6 +2075,44 @@ function loadAmmoIfNeeded() {
 try {
   byId('physics').checked = localStorage.getItem('mvPhysics') !== '0';
 } catch {}
+/* ---- 揺れ調整（FBX自動検出分）：スライダーは即時反映、値と「FBXも含める」はこのブラウザに記憶 ---- */
+const SP_FIELDS = {spStiff: ['stiff', v => v.toFixed(2)], spGrav: ['grav', v => v.toFixed(2)], spDrag: ['drag', v => v.toFixed(2)], spHit: ['hit', v => (v * 100).toFixed(1) + 'cm']};
+function syncSpringUI() {
+  for (const [id, [, fmt]] of Object.entries(SP_FIELDS)) byId(id + 'Text').textContent = fmt(parseFloat(byId(id).value));
+}
+function saveSpringPrefs() {
+  try {
+    localStorage.setItem('mvSpring', JSON.stringify(springPrefs()));
+  } catch {}
+}
+try {
+  const saved = JSON.parse(localStorage.getItem('mvSpring') || '{}');
+  for (const [id, [key]] of Object.entries(SP_FIELDS)) if (typeof saved[key] === 'number') byId(id).value = saved[key];
+  if (typeof saved.col === 'boolean') byId('spCol').checked = saved.col;
+} catch {}
+byId('fbxSpring').checked = localStorage.getItem('mvFbxSpring') !== '0';
+syncSpringUI();
+for (const id of Object.keys(SP_FIELDS)) {
+  byId(id).addEventListener('input', () => { syncSpringUI(); applySpringSettings(); });
+  byId(id).addEventListener('change', saveSpringPrefs);
+}
+byId('spCol').addEventListener('change', () => { applySpringSettings(); saveSpringPrefs(); });
+byId('spReset').addEventListener('click', () => {
+  for (const [id, [key]] of Object.entries(SP_FIELDS)) byId(id).value = SPRING_DEFAULTS[key];
+  byId('spCol').checked = SPRING_DEFAULTS.col;
+  syncSpringUI();
+  applySpringSettings();
+  saveSpringPrefs();
+  setStatus('揺れ調整を初期値に戻しました');
+});
+byId('fbxSpring').addEventListener('change', async () => {
+  localStorage.setItem('mvFbxSpring', byId('fbxSpring').checked ? '1' : '0');
+  // FBX等の自動VRM化モデル（または変換できなかった素のモデル）を読み込み中なら、揺れものの有無を反映するために読み込み直す
+  if (lastModelFile && loadedObject && (autoVrmOrig || (!vrm && !mmdMesh))) {
+    setStatus('FBXの揺れもの：' + (byId('fbxSpring').checked ? '含める' : '含めない') + '（モデルを読み込み直します…）');
+    await loadModelFile(lastModelFile, currentHistoryIds.model);
+  } else setStatus('FBXの揺れもの：' + (byId('fbxSpring').checked ? '含める' : '含めない') + '（次にFBXを読み込むときから）');
+});
 byId('physics').addEventListener('change', () => {
   try {
     localStorage.setItem('mvPhysics', byId('physics').checked ? '1' : '0');
@@ -2280,11 +2470,7 @@ async function precomputeListClips(list) {
         objectUrls.push(url);
         vmd = await new Promise((ok, ng) => vmdLoader.loadVMD(url, ok, undefined, ng));
       } else {
-        const gltfLoader = new GLTFLoader();
-        gltfLoader.register(p => new VRMAnimationLoaderPlugin(p));
-        vrmAnimation = (await gltfLoader.parseAsync(fixVrmaSpec(await file.arrayBuffer()), '')).userData
-          .vrmAnimations?.[0];
-        if (!vrmAnimation) throw new Error('VRMAのアニメーションが見つかりません');
+        vrmAnimation = await loadVrmAnimationFile(file);
       }
       if (token !== motionLoadToken || (!vrm && !mmdMesh)) return false;
       groundFixLast = '';
@@ -2731,19 +2917,24 @@ async function saveMotion(fmt = 'vrma') {
   }
   const file = currentMotionFile,
     base = file.name.replace(/\.[^.]+$/, ''),
-    isVmd = /\.vmd$/i.test(file.name);
-  if (isVmd === (fmt === 'vmd')) {
+    isVmd = /\.vmd$/i.test(file.name), isAnim = /\.anim$/i.test(file.name);
+  if (!isAnim && isVmd === (fmt === 'vmd')) {
     downloadBlob(file, file.name);
     setStatus(file.name + ' を保存しました（そのまま）');
     return;
   }
-  if (isVmd && !vrm) {
-    setStatus('VMD→VRMAの変換にはVRMモデルが必要です。VRMを開いてから保存してください');
+  if ((isVmd || isAnim) && fmt === 'vrma' && !vrm) {
+    setStatus((isAnim ? 'Unity anim' : 'VMD') + '→VRMAの変換にはVRMモデルが必要です。VRMを開いてから保存してください');
     return;
   }
-  setStatus((isVmd ? 'VRMA' : 'VMD') + 'に変換中…');
+  setStatus((fmt === 'vrma' ? 'VRMA' : 'VMD') + 'に変換中…');
   try {
-    if (isVmd) {
+    if (isAnim && fmt === 'vrma') {
+      vrm.humanoid.resetNormalizedPose(); // 変換は初期ポーズ基準で行う
+      const blob = exportVRMA(groundFixVRM(createVRMAnimationClip(await loadVrmAnimationFile(file), vrm), vrm), vrm);
+      downloadBlob(blob, base + '.vrma');
+      setStatus(base + '.vrma を保存しました（Unity anim→VRMA変換・' + formatBytes(blob.size) + '）');
+    } else if (isVmd) {
       vrm.humanoid.resetNormalizedPose(); // 変換は初期ポーズ基準で行う
       const url = URL.createObjectURL(file);
       let vmd;
@@ -2756,14 +2947,11 @@ async function saveMotion(fmt = 'vrma') {
       downloadBlob(blob, base + '.vrma');
       setStatus(base + '.vrma を保存しました（VMD→VRMA変換・' + formatBytes(blob.size) + '）');
     } else {
-      const gltfLoader = new GLTFLoader();
-      gltfLoader.register(p => new VRMAnimationLoaderPlugin(p));
-      const anim = (await gltfLoader.parseAsync(fixVrmaSpec(await file.arrayBuffer()), '')).userData.vrmAnimations?.[0];
-      if (!anim) throw new Error('VRMAのアニメーションが見つかりません');
-      const {bytes, info} = vrmaToVMD(anim, 'VRMA変換'),
+      const anim = await loadVrmAnimationFile(file);
+      const {bytes, info} = vrmaToVMD(anim, isAnim ? 'Unity anim変換' : 'VRMA変換'),
         blob = new Blob([bytes], {type: 'application/octet-stream'});
       downloadBlob(blob, base + '.vmd');
-      setStatus(base + '.vmd を保存しました（VRMA→VMD変換・ボーン' + info.bones + '・キー' + info.boneKeys + '・表情キー' + info.morphKeys + '・' + formatBytes(blob.size) + '。足はFK、足IKはオフ）');
+      setStatus(base + '.vmd を保存しました（' + (isAnim ? 'Unity anim' : 'VRMA') + '→VMD変換・ボーン' + info.bones + '・キー' + info.boneKeys + '・表情キー' + info.morphKeys + '・' + formatBytes(blob.size) + '。足はFK、足IKはオフ）');
     }
   } catch (e) {
     console.error(e);
@@ -3797,11 +3985,11 @@ byId('save').onclick = e => {
     {label: 'モデルを保存：VRM（' + (!loaded ? '未読込' : isVrm ? 'そのまま' : 'ボーンを割り当てて変換') + '）', fn: () => saveModel('vrm')},
     {label: 'モデルを保存：MMD（' + (!loaded ? '未読込' : mmdMesh ? 'そのまま' : 'PMXに変換・ZIP') + '）', fn: () => saveModel('mmd')},
     {
-      label: 'モーションを保存：VRMA（' + (!currentMotionFile ? '未読込' : /\.vmd$/i.test(currentMotionFile.name) ? 'VMDから変換・要VRM' : 'そのまま') + '）',
+      label: 'モーションを保存：VRMA（' + (!currentMotionFile ? '未読込' : /\.vmd$/i.test(currentMotionFile.name) ? 'VMDから変換・要VRM' : /\.anim$/i.test(currentMotionFile.name) ? 'Unity animから変換・要VRM' : 'そのまま') + '）',
       fn: () => saveMotion('vrma')
     },
     {
-      label: 'モーションを保存：VMD（' + (!currentMotionFile ? '未読込' : /\.vmd$/i.test(currentMotionFile.name) ? 'そのまま' : 'VRMAから変換') + '）',
+      label: 'モーションを保存：VMD（' + (!currentMotionFile ? '未読込' : /\.vmd$/i.test(currentMotionFile.name) ? 'そのまま' : /\.anim$/i.test(currentMotionFile.name) ? 'Unity animから変換' : 'VRMAから変換') + '）',
       fn: () => saveMotion('vmd')
     }
   ]);
@@ -4097,6 +4285,148 @@ function blendStep(dt) {
   if (progress >= 1) activeBlend = null;
 }
 let motionLoadToken = 0;
+
+// ============================================================================
+// Unity の Humanoid .anim（筋肉値）→ VRMAnimation
+// ============================================================================
+/* 根拠：同じモーションの .anim と、Unityが書き出した .vrma（全人型ボーン・503フレーム）を突き合わせ、骨ごとの変換式を当てはめた（全51ボーンの平均誤差 約2°）。
+ * 各ボーン：筋肉値 → 角度(度) = 値≥0 ? 値×gp : 値×gn。回転 = U · ST(θT)⁻¹ · ST(θ) · U⁻¹（ST = スイング(exp写像)→X軸ひねり、θT = Tポーズの筋肉値）。
+ * ひねりは上腕→前腕→手、上腿→下腿→足で半分ずつ配分される（Unityの upperArmTwist 等の既定値0.5）。親のひねりは p・a・ax（近位側に Rot(軸, a×値) を左から掛ける）。
+ * 腰：回転 = RootQ(y,z反転) × (背骨×胸×上胸)^(-0.55)、移動 = s×(RootT(x反転) + 向き×オフセット)。VRMAの基準の腰の高さ restY を持たせると、three-vrm-animation が各モデルの大きさに合わせて拡縮する。 */
+const HUMAN_ANIM_TABLE = {"spine":{"m":["Spine Twist Left-Right","Spine Left-Right","Spine Front-Back"],"u":[0.5,0.5,0.5,0.5],"gp":[-40.0,40.0,-40.0],"gn":[-40.0,40.0,-40.0],"mt":[-0.0,0.0,0.0],"p":"","a":0.0,"ax":[0.0,1.0,0.0]},"chest":{"m":["Chest Twist Left-Right","Chest Left-Right","Chest Front-Back"],"u":[0.5,0.5,0.5,0.5],"gp":[-40.0,40.0,-40.0],"gn":[-40.0,40.0,-40.0],"mt":[-0.0,-0.0,0.0],"p":"","a":0.0,"ax":[0.0,1.0,0.0]},"upperChest":{"m":["UpperChest Twist Left-Right","UpperChest Left-Right","UpperChest Front-Back"],"u":[0.5,0.5,0.5,0.5],"gp":[-40.0,40.0,-40.0],"gn":[-40.0,40.0,-40.0],"mt":[-0.0,-0.0,0.0],"p":"","a":0.0,"ax":[0.0,1.0,0.0]},"neck":{"m":["Neck Turn Left-Right","Neck Tilt Left-Right","Neck Nod Down-Up"],"u":[0.5,0.5,0.5,0.5],"gp":[-40.0,40.0,-40.0],"gn":[-40.0,40.0,-40.0],"mt":[-0.0,0.0,0.0],"p":"","a":0.0,"ax":[0.0,1.0,0.0]},"head":{"m":["Head Turn Left-Right","Head Tilt Left-Right","Head Nod Down-Up"],"u":[0.5,0.5,0.5,0.5],"gp":[-40.0,40.0,-40.0],"gn":[-40.0,40.0,-40.0],"mt":[0.0,-0.0,0.0],"p":"","a":0.0,"ax":[0.0,1.0,0.0]},"leftShoulder":{"m":["","Left Shoulder Front-Back","Left Shoulder Down-Up"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,15.0,30.0],"gn":[0.0,15.0,15.0],"mt":[0.0,-0.0,-0.0],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"leftUpperArm":{"m":["Left Arm Twist In-Out","Left Arm Front-Back","Left Arm Down-Up"],"u":[0.0,0.0,0.0,1.0],"gp":[-45.0,100.0,100.0],"gn":[-45.0,100.0,60.0],"mt":[-0.0136,0.3003,0.3991],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"leftLowerArm":{"m":["Left Forearm Twist In-Out","","Left Forearm Stretch"],"u":[0.707107,0.0,0.0,0.707107],"gp":[-45.0,0.0,-80.0],"gn":[-45.0,0.0,-80.0],"mt":[0.0167,0.0,0.9998],"p":"Left Arm Twist In-Out","a":-45.0,"ax":[1.0,0.0,0.0]},"leftHand":{"m":["","Left Hand In-Out","Left Hand Down-Up"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,40.0,80.0],"gn":[0.0,40.0,80.0],"mt":[0.0,0.0001,-0.001],"p":"Left Forearm Twist In-Out","a":-45.0,"ax":[1.0,0.0,0.0]},"leftUpperLeg":{"m":["Left Upper Leg Twist In-Out","Left Upper Leg In-Out","Left Upper Leg Front-Back"],"u":[0.5,0.5,0.5,0.5],"gp":[30.0,60.0,50.0],"gn":[30.0,60.0,90.0],"mt":[0.0019,-0.0001,0.6001],"p":"","a":0.0,"ax":[0.0,1.0,0.0]},"leftLowerLeg":{"m":["Left Lower Leg Twist In-Out","","Left Lower Leg Stretch"],"u":[0.5,0.5,0.5,0.5],"gp":[45.0,0.0,-80.0],"gn":[45.0,0.0,-80.0],"mt":[0.0016,0.0,0.9999],"p":"Left Upper Leg Twist In-Out","a":30.0,"ax":[0.0,1.0,0.0]},"leftFoot":{"m":["Left Foot Twist In-Out","","Left Foot Up-Down"],"u":[0.0,0.707107,0.0,-0.707107],"gp":[30.0,0.0,-50.0],"gn":[30.0,0.0,-50.0],"mt":[0.0007,0.0,0.0],"p":"Left Lower Leg Twist In-Out","a":45.0,"ax":[0.0,1.0,0.0]},"leftToes":{"m":["","","Left Toes Up-Down"],"u":[0.5,0.5,0.5,0.5],"gp":[0.0,0.0,50.0],"gn":[0.0,0.0,50.0],"mt":[0.0,0.0,0.0],"p":"","a":0.0,"ax":[0.0,1.0,0.0]},"leftIndexProximal":{"m":["","LeftHand.Index.Spread","LeftHand.Index.1 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,-15.0,60.0],"gn":[0.0,-25.0,45.0],"mt":[0.0,-0.5458,0.6844],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"leftIndexIntermediate":{"m":["","","LeftHand.Index.2 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,0.0,45.0],"gn":[0.0,0.0,45.0],"mt":[0.0,0.0,0.8166],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"leftIndexDistal":{"m":["","","LeftHand.Index.3 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,0.0,45.0],"gn":[0.0,0.0,45.0],"mt":[0.0,0.0,0.8166],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"leftMiddleProximal":{"m":["","LeftHand.Middle.Spread","LeftHand.Middle.1 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,-2.294,50.0],"gn":[0.0,-11.271,50.0],"mt":[0.0,-0.7931,0.669],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"leftMiddleIntermediate":{"m":["","","LeftHand.Middle.2 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,0.0,45.0],"gn":[0.0,0.0,45.0],"mt":[0.0,0.0,0.8123],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"leftMiddleDistal":{"m":["","","LeftHand.Middle.3 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,0.0,45.0],"gn":[0.0,0.0,45.0],"mt":[0.0,0.0,0.8123],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"leftRingProximal":{"m":["","LeftHand.Ring.Spread","LeftHand.Ring.1 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,7.17,50.0],"gn":[0.0,7.145,50.0],"mt":[0.0,-0.6217,0.6683],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"leftRingIntermediate":{"m":["","","LeftHand.Ring.2 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,0.0,45.0],"gn":[0.0,0.0,45.0],"mt":[0.0,0.0,0.8117],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"leftRingDistal":{"m":["","","LeftHand.Ring.3 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,0.0,45.0],"gn":[0.0,0.0,45.0],"mt":[0.0,0.0,0.8117],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"leftLittleProximal":{"m":["","LeftHand.Little.Spread","LeftHand.Little.1 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,20.0,50.0],"gn":[0.0,20.0,50.0],"mt":[0.0,-0.4706,0.6696],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"leftLittleIntermediate":{"m":["","","LeftHand.Little.2 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,0.0,45.0],"gn":[0.0,0.0,45.0],"mt":[0.0,0.0,0.8129],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"leftLittleDistal":{"m":["","","LeftHand.Little.3 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,0.0,45.0],"gn":[0.0,0.0,45.0],"mt":[0.0,0.0,0.8129],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"leftThumbMetacarpal":{"m":["","LeftHand.Thumb.Spread","LeftHand.Thumb.1 Stretched"],"u":[0.854827,-0.307353,-0.236872,0.344523],"gp":[0.0,25.0,-25.0],"gn":[0.0,30.0,15.0],"mt":[0.0,0.4977,0.7317],"p":"","a":0.0,"ax":[0.6989,-0.6887,-0.1932]},"leftThumbProximal":{"m":["","","LeftHand.Thumb.2 Stretched"],"u":[0.707107,0.0,0.0,0.707107],"gp":[0.0,0.0,34.95],"gn":[0.0,0.0,40.0],"mt":[0.0,0.0,0.6471],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"leftThumbDistal":{"m":["","","LeftHand.Thumb.3 Stretched"],"u":[0.707107,0.0,0.0,0.707107],"gp":[0.0,0.0,34.95],"gn":[0.0,0.0,40.0],"mt":[0.0,0.0,0.6471],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"rightShoulder":{"m":["","Right Shoulder Front-Back","Right Shoulder Down-Up"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,-15.0,-30.0],"gn":[0.0,-15.0,-15.0],"mt":[0.0,0.0,-0.0],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"rightUpperArm":{"m":["Right Arm Twist In-Out","Right Arm Front-Back","Right Arm Down-Up"],"u":[0.0,0.0,0.0,1.0],"gp":[-45.0,-100.0,-100.0],"gn":[-45.0,-100.0,-60.0],"mt":[-0.0135,0.3003,0.3991],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"rightLowerArm":{"m":["Right Forearm Twist In-Out","","Right Forearm Stretch"],"u":[0.707107,0.0,0.0,0.707107],"gp":[-45.0,0.0,80.0],"gn":[-45.0,0.0,80.0],"mt":[0.0166,0.0,0.9998],"p":"Right Arm Twist In-Out","a":-45.0,"ax":[1.0,0.0,0.0]},"rightHand":{"m":["","Right Hand In-Out","Right Hand Down-Up"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,-40.0,-80.0],"gn":[0.0,-40.0,-80.0],"mt":[0.0,0.0001,-0.001],"p":"Right Forearm Twist In-Out","a":-45.0,"ax":[1.0,0.0,0.0]},"rightUpperLeg":{"m":["Right Upper Leg Twist In-Out","Right Upper Leg In-Out","Right Upper Leg Front-Back"],"u":[0.5,0.5,0.5,0.5],"gp":[-30.0,-60.0,50.0],"gn":[-30.0,-60.0,90.0],"mt":[0.0019,-0.0001,0.6001],"p":"","a":0.0,"ax":[0.0,1.0,0.0]},"rightLowerLeg":{"m":["Right Lower Leg Twist In-Out","","Right Lower Leg Stretch"],"u":[0.5,0.5,0.5,0.5],"gp":[-45.0,0.0,-80.0],"gn":[-45.0,0.0,-80.0],"mt":[0.0016,0.0,0.9999],"p":"Right Upper Leg Twist In-Out","a":-30.0,"ax":[0.0,1.0,0.0]},"rightFoot":{"m":["Right Foot Twist In-Out","","Right Foot Up-Down"],"u":[0.0,0.707107,0.0,-0.707107],"gp":[-30.0,0.0,-50.0],"gn":[-30.0,0.0,-50.0],"mt":[0.0007,0.0,0.0],"p":"Right Lower Leg Twist In-Out","a":-45.0,"ax":[0.0,1.0,0.0]},"rightToes":{"m":["","","Right Toes Up-Down"],"u":[0.5,0.5,0.5,0.5],"gp":[0.0,0.0,50.0],"gn":[0.0,0.0,50.0],"mt":[0.0,0.0,0.0],"p":"","a":0.0,"ax":[0.0,1.0,0.0]},"rightIndexProximal":{"m":["","RightHand.Index.Spread","RightHand.Index.1 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,15.0,-50.0],"gn":[0.0,20.0,-45.0],"mt":[0.0,-0.5295,0.6834],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"rightIndexIntermediate":{"m":["","","RightHand.Index.2 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,0.0,-45.0],"gn":[0.0,0.0,-45.0],"mt":[0.0,0.0,0.8166],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"rightIndexDistal":{"m":["","","RightHand.Index.3 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,0.0,-45.0],"gn":[0.0,0.0,-45.0],"mt":[0.0,0.0,0.8166],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"rightMiddleProximal":{"m":["","RightHand.Middle.Spread","RightHand.Middle.1 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,2.309,-50.0],"gn":[0.0,11.283,-50.0],"mt":[0.0,-0.791,0.6689],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"rightMiddleIntermediate":{"m":["","","RightHand.Middle.2 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,0.0,-45.0],"gn":[0.0,0.0,-45.0],"mt":[0.0,0.0,0.8122],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"rightMiddleDistal":{"m":["","","RightHand.Middle.3 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,0.0,-45.0],"gn":[0.0,0.0,-45.0],"mt":[0.0,0.0,0.8122],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"rightRingProximal":{"m":["","RightHand.Ring.Spread","RightHand.Ring.1 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,-7.181,-50.0],"gn":[0.0,-7.144,-50.0],"mt":[0.0,-0.6207,0.6682],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"rightRingIntermediate":{"m":["","","RightHand.Ring.2 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,0.0,-45.0],"gn":[0.0,0.0,-45.0],"mt":[0.0,0.0,0.8117],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"rightRingDistal":{"m":["","","RightHand.Ring.3 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,0.0,-45.0],"gn":[0.0,0.0,-45.0],"mt":[0.0,0.0,0.8117],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"rightLittleProximal":{"m":["","RightHand.Little.Spread","RightHand.Little.1 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,-20.0,-50.0],"gn":[0.0,-20.0,-50.0],"mt":[0.0,-0.4699,0.6696],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"rightLittleIntermediate":{"m":["","","RightHand.Little.2 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,0.0,-45.0],"gn":[0.0,0.0,-45.0],"mt":[0.0,0.0,0.8129],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"rightLittleDistal":{"m":["","","RightHand.Little.3 Stretched"],"u":[0.0,0.0,0.0,1.0],"gp":[0.0,0.0,-45.0],"gn":[0.0,0.0,-45.0],"mt":[0.0,0.0,0.8129],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"rightThumbMetacarpal":{"m":["","RightHand.Thumb.Spread","RightHand.Thumb.1 Stretched"],"u":[0.861276,0.325252,0.238676,0.308947],"gp":[0.0,-25.0,20.0],"gn":[0.0,-30.0,-11.32],"mt":[0.0,0.4821,0.8823],"p":"","a":0.0,"ax":[0.6745,0.7077,0.2102]},"rightThumbProximal":{"m":["","","RightHand.Thumb.2 Stretched"],"u":[0.707107,0.0,0.0,0.707107],"gp":[0.0,0.0,-34.946],"gn":[0.0,0.0,-40.0],"mt":[0.0,0.0,0.647],"p":"","a":0.0,"ax":[1.0,0.0,0.0]},"rightThumbDistal":{"m":["","","RightHand.Thumb.3 Stretched"],"u":[0.707107,0.0,0.0,0.707107],"gp":[0.0,0.0,-34.946],"gn":[0.0,0.0,-40.0],"mt":[0.0,0.0,0.647],"p":"","a":0.0,"ax":[1.0,0.0,0.0]}};
+const HUMAN_ANIM_HIPS = {s: 1.0269, o: [0.0028, -0.1273, -0.0363], restY: 0.896144, w: 0.55};
+/** .anim のYAMLテキストから m_FloatCurves（筋肉値）を読む。戻り値：{curves: Map(名前→[[時刻,値,入力傾き,出力傾き]…]), start, stop, rate}。 */
+function parseHumanAnim(text) {
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+  if (text.indexOf('\r') >= 0) text = text.replace(/\r\n?/g, '\n');
+  const a = text.indexOf('m_FloatCurves:');
+  if (a < 0) throw new Error('Unityのアニメーション(.anim)のテキスト(YAML)形式ではありません（バイナリ形式は未対応）');
+  let b = text.indexOf('m_PPtrCurves:', a);
+  if (b < 0) b = text.length;
+  const blk = text.slice(a, b), curves = new Map(), keys = [];
+  const re = /time: (\S+)\n\s+value: (\S+)\n\s+inSlope: (\S+)\n\s+outSlope: (\S+)|attribute: ([^\n]*)/g;
+  let m, maxT = 0;
+  while ((m = re.exec(blk))) {
+    if (m[5] === undefined) {
+      keys.push([+m[1], +m[2], +m[3], +m[4]]);
+      if (+m[1] > maxT) maxT = +m[1];
+    } else curves.set(m[5].trim(), keys.splice(0));
+  }
+  const cs = text.indexOf('m_AnimationClipSettings:'), seg = cs >= 0 ? text.slice(cs, cs + 1500) : '',
+    pick = (src, re2) => { const r = re2.exec(src); return r ? +r[1] : null; };
+  return {curves, start: pick(seg, /m_StartTime: (\S+)/) ?? 0, stop: pick(seg, /m_StopTime: (\S+)/) ?? maxT, rate: pick(text.slice(0, a), /m_SampleRate: (\S+)/) ?? 30};
+}
+/** Unityのカーブ（エルミート補間）を times で評価する。傾きが無限大の区間は階段（手前の値）。 */
+function sampleAnimCurve(keys, times) {
+  const out = new Float64Array(times.length), n = keys.length;
+  let i = 0;
+  for (let k = 0; k < times.length; k++) {
+    const t = times[k];
+    if (n === 1 || t <= keys[0][0]) { out[k] = keys[0][1]; continue; }
+    if (t >= keys[n - 1][0]) { out[k] = keys[n - 1][1]; continue; }
+    while (i < n - 2 && keys[i + 1][0] <= t) i++;
+    while (i > 0 && keys[i][0] > t) i--;
+    const [t0, v0, , o0] = keys[i], [t1, v1, i1] = keys[i + 1], dt = t1 - t0, s = (t - t0) / dt;
+    if (!isFinite(o0) || !isFinite(i1)) { out[k] = v0; continue; }
+    const m0 = o0 * dt, m1 = i1 * dt, s2 = s * s, s3 = s2 * s;
+    out[k] = (2 * s3 - 3 * s2 + 1) * v0 + (s3 - 2 * s2 + s) * m0 + (-2 * s3 + 3 * s2) * v1 + (s3 - s2) * m1;
+  }
+  return out;
+}
+/** Unity の Humanoid .anim（YAMLテキスト）を VRMAnimation にする。ボーンの筋肉カーブが無い骨はトラックを作らない（その骨は動かさない）。 */
+function humanAnimToVRMAnimation(text) {
+  const {curves, start, stop, rate} = parseHumanAnim(text);
+  if (![...curves.keys()].some(k => /Front-Back|Down-Up|Stretched|RootT|RootQ/.test(k)))
+    throw new Error('Humanoidの筋肉カーブがありません（Generic/Legacyのclipは未対応）');
+  const D2R = Math.PI / 180, fps = Math.min(60, Math.max(1, rate)), nFrames = Math.max(2, Math.floor((stop - start) * fps + 1e-6) + 1),
+    srcTimes = new Float64Array(nFrames), outTimes = new Float32Array(nFrames);
+  for (let k = 0; k < nFrames; k++) {
+    srcTimes[k] = Math.min(start + k / fps, Math.max(stop, start));
+    outTimes[k] = k / fps;
+  }
+  const cache = new Map(),
+    col = name => {
+      if (!name) return null;
+      if (!cache.has(name)) {
+        const ks = curves.get(name);
+        cache.set(name, ks && ks.length ? sampleAnimCurve(ks, srcTimes) : null);
+      }
+      return cache.get(name);
+    },
+    AX = new THREE.Vector3(1, 0, 0), qSwing = new THREE.Quaternion(), qTwist = new THREE.Quaternion(), qA = new THREE.Quaternion(), qD = new THREE.Quaternion(), qO = new THREE.Quaternion(), qR = new THREE.Quaternion(),
+    st = (tx, ty, tz, out) => {   // スイング(0,y,z の回転ベクトル)→ ひねり(X軸)。角度は度
+      const vy = ty * D2R, vz = tz * D2R, ang = Math.hypot(vy, vz);
+      if (ang < 1e-12) qSwing.set(0, 0, 0, 1);
+      else { const sn = Math.sin(ang / 2) / ang; qSwing.set(0, vy * sn, vz * sn, Math.cos(ang / 2)); }
+      qTwist.setFromAxisAngle(AX, tx * D2R);
+      return out.copy(qSwing).multiply(qTwist);
+    },
+    ang = (m, gp, gn) => (m >= 0 ? m * gp : m * gn),
+    quats = new Map(), has = new Set();
+  for (const [bone, e] of Object.entries(HUMAN_ANIM_TABLE)) {
+    const own = e.m.map(col), prox = col(e.p), arr = new Float32Array(nFrames * 4),
+      uq = new THREE.Quaternion(...e.u), uqInv = uq.clone().invert(), axis = new THREE.Vector3(...e.ax),
+      atInv = st(ang(e.mt[0], e.gp[0], e.gn[0]), ang(e.mt[1], e.gp[1], e.gn[1]), ang(e.mt[2], e.gp[2], e.gn[2]), new THREE.Quaternion()).invert();
+    if (own.some(Boolean) || prox) has.add(bone);
+    for (let k = 0; k < nFrames; k++) {
+      const v = [0, 1, 2].map(i => (e.m[i] ? (own[i] ? own[i][k] : e.mt[i]) : 0));   // カーブが無い筋肉はTポーズの値（＝動かさない）
+      st(ang(v[0], e.gp[0], e.gn[0]), ang(v[1], e.gp[1], e.gn[1]), ang(v[2], e.gp[2], e.gn[2]), qA);
+      qD.copy(atInv).multiply(qA);
+      qO.copy(uq).multiply(qD).multiply(uqInv);
+      if (prox && e.a) { qR.setFromAxisAngle(axis, e.a * prox[k] * D2R); qO.premultiply(qR); }
+      if (k > 0 && qO.x * arr[k * 4 - 4] + qO.y * arr[k * 4 - 3] + qO.z * arr[k * 4 - 2] + qO.w * arr[k * 4 - 1] < 0) { qO.x = -qO.x; qO.y = -qO.y; qO.z = -qO.z; qO.w = -qO.w; }   // 補間が遠回りしないよう同じ向きの符号に
+      arr.set([qO.x, qO.y, qO.z, qO.w], k * 4);
+    }
+    quats.set(bone, arr);
+  }
+  const anim = new VRMAnimation(), rot = anim.humanoidTracks.rotation;
+  anim.duration = (nFrames - 1) / fps;
+  anim.restHipsPosition.set(0, HUMAN_ANIM_HIPS.restY, 0);
+  // 腰：RootQ / RootT
+  const rq = ['x', 'y', 'z', 'w'].map(c => col('RootQ.' + c)), rt = ['x', 'y', 'z'].map(c => col('RootT.' + c)), H = HUMAN_ANIM_HIPS;
+  const Qm = new THREE.Quaternion(), qs = new THREE.Quaternion(), qc = new THREE.Quaternion(), qu = new THREE.Quaternion(), sc = new THREE.Quaternion(), hq = new THREE.Quaternion(), pv = new THREE.Vector3(),
+    getQ = (bone, k, out) => { const a = quats.get(bone); return out.set(a[k * 4], a[k * 4 + 1], a[k * 4 + 2], a[k * 4 + 3]); },
+    qpow = (q, w, out) => {
+      if (q.w < 0) q = new THREE.Quaternion(-q.x, -q.y, -q.z, -q.w);
+      const s = Math.sqrt(Math.max(0, 1 - q.w * q.w));
+      if (s < 1e-9) return out.set(0, 0, 0, 1);
+      return out.setFromAxisAngle(pv.set(q.x / s, q.y / s, q.z / s), 2 * Math.acos(Math.min(1, q.w)) * w);
+    };
+  if (rq.every(Boolean)) {
+    const arr = new Float32Array(nFrames * 4), pq = new THREE.Quaternion();
+    for (let k = 0; k < nFrames; k++) {
+      Qm.set(rq[0][k], -rq[1][k], -rq[2][k], rq[3][k]).normalize();
+      sc.copy(getQ('spine', k, qs)).multiply(getQ('chest', k, qc)).multiply(getQ('upperChest', k, qu));
+      hq.copy(Qm).multiply(qpow(sc, -H.w, pq));
+      if (k > 0 && hq.x * arr[k * 4 - 4] + hq.y * arr[k * 4 - 3] + hq.z * arr[k * 4 - 2] + hq.w * arr[k * 4 - 1] < 0) { hq.x = -hq.x; hq.y = -hq.y; hq.z = -hq.z; hq.w = -hq.w; }
+      arr.set([hq.x, hq.y, hq.z, hq.w], k * 4);
+    }
+    rot.set('hips', new THREE.QuaternionKeyframeTrack('hips.quaternion', outTimes, arr));
+    has.delete('hips');
+  }
+  if (rt.every(Boolean) && rq.every(Boolean)) {
+    const arr = new Float32Array(nFrames * 3);
+    for (let k = 0; k < nFrames; k++) {
+      Qm.set(rq[0][k], -rq[1][k], -rq[2][k], rq[3][k]).normalize();
+      pv.set(H.o[0], H.o[1], H.o[2]).applyQuaternion(Qm).add(new THREE.Vector3(-rt[0][k], rt[1][k], rt[2][k])).multiplyScalar(H.s);
+      arr.set([pv.x, pv.y, pv.z], k * 3);
+    }
+    anim.humanoidTracks.translation.set('hips', new THREE.VectorKeyframeTrack('hips.position', outTimes, arr));
+  }
+  for (const bone of has) if (quats.has(bone) && bone !== 'hips') rot.set(bone, new THREE.QuaternionKeyframeTrack(bone + '.quaternion', outTimes, quats.get(bone)));
+  if (!rot.size && !anim.humanoidTracks.translation.size) throw new Error('変換できるHumanoidの筋肉カーブがありません');
+  return anim;
+}
+
+/** モーションファイルから VRMAnimation を作る。VRMA(.vrma/.glb) は読み込み、Unity の .anim は筋肉値から変換する。 */
+async function loadVrmAnimationFile(file) {
+  if (/\.anim$/i.test(file.name)) return humanAnimToVRMAnimation(await file.text());
+  const gltfLoader = new GLTFLoader();
+  gltfLoader.register(p => new VRMAnimationLoaderPlugin(p));
+  const a = (await gltfLoader.parseAsync(fixVrmaSpec(await file.arrayBuffer()), '')).userData.vrmAnimations?.[0];
+  if (!a) throw new Error('VRMAのアニメーションが見つかりません');
+  return a;
+}
 /** モーション(VRMA/VMD)を読み込み、現在のVRM/MMD用に変換して再生する。options：reapply（設定変更後の再適用）, fromList, noHist, chain（つなぎ補間）, ck（キャッシュキー）, hid（履歴ID）。 */
 async function loadMotion(file, options = {}) {
   if (!file) return;
@@ -4129,11 +4459,7 @@ async function loadMotion(file, options = {}) {
         objectUrls.push(url);
         vmd = await new Promise((ok, ng) => vmdLoader.loadVMD(url, ok, undefined, ng));
       } else {
-        const gltfLoader = new GLTFLoader();
-        gltfLoader.register(p => new VRMAnimationLoaderPlugin(p));
-        vrmAnimation = (await gltfLoader.parseAsync(fixVrmaSpec(await file.arrayBuffer()), '')).userData
-          .vrmAnimations?.[0];
-        if (!vrmAnimation) throw new Error('VRMAのアニメーションが見つかりません');
+        vrmAnimation = await loadVrmAnimationFile(file);
       }
     } // !cachedEntry（キャッシュがあれば読み込み・変換を省く）
     let physicsOn = false,
@@ -4204,7 +4530,7 @@ async function loadMotion(file, options = {}) {
     setStatus(
       file.name +
         ' を再生中（' +
-        (isVmd ? 'VMD' : 'VRMA') +
+        (isVmd ? 'VMD' : /\.anim$/i.test(file.name) ? 'Unity anim' : 'VRMA') +
         ' → ' +
         (mmdMesh ? 'MMD' : 'VRM') +
         '）' +
